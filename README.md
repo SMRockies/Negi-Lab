@@ -4,6 +4,8 @@ Negi-Lab is an open-source browser-based circuit editor built on a real-time gra
 
 ![Negi-Lab Demo Screenshot](docs/demo-screenshot.png)
 
+
+![Negi-Lab Demo](docs/demo.gif)
 ---
 
 ## ⚡ What is Negi-Lab?
