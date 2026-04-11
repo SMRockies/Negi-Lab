@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "node-9",
+      "type": "LED",
+      "x": 760,
+      "y": 300,
+      "state": null
+    },
+    {
+      "id": "node-10",
+      "type": "SWITCH",
+      "x": 900,
+      "y": 280,
+      "state": "CLOSED"
+    },
+    {
+      "id": "node-11",
+      "type": "BATTERY",
+      "x": 1040,
+      "y": 300,
+      "state": null
+    },
+    {
+      "id": "node-12",
+      "type": "SWITCH",
+      "x": 900,
+      "y": 160,
+      "state": "CLOSED"
+    },
+    {
+      "id": "node-13",
+      "type": "LED",
+      "x": 660,
+      "y": 300,
+      "state": null
+    }
+  ],
+  "wires": [
+    {
+      "id": "wire-10",
+      "from": {
+        "nodeId": "node-10",
+        "pinId": "a"
+      },
+      "to": {
+        "nodeId": "node-9",
+        "pinId": "anode"
+      },
+      "points": []
+    },
+    {
+      "id": "wire-12",
+      "from": {
+        "nodeId": "node-11",
+        "pinId": "positive"
+      },
+      "to": {
+        "nodeId": "node-10",
+        "pinId": "b"
+      },
+      "points": []
+    },
+    {
+      "id": "wire-13",
+      "from": {
+        "nodeId": "node-9",
+        "pinId": "cathode"
+      },
+      "to": {
+        "nodeId": "node-11",
+        "pinId": "negative"
+      },
+      "points": []
+    },
+    {
+      "id": "wire-14",
+      "from": {
+        "nodeId": "node-11",
+        "pinId": "positive"
+      },
+      "to": {
+        "nodeId": "node-12",
+        "pinId": "b"
+      },
+      "points": [
+        {
+          "x": 1040,
+          "y": 160
+        }
+      ]
+    },
+    {
+      "id": "wire-15",
+      "from": {
+        "nodeId": "node-12",
+        "pinId": "a"
+      },
+      "to": {
+        "nodeId": "node-13",
+        "pinId": "anode"
+      },
+      "points": [
+        {
+          "x": 660,
+          "y": 160
+        }
+      ]
+    },
+    {
+      "id": "wire-16",
+      "from": {
+        "nodeId": "node-13",
+        "pinId": "cathode"
+      },
+      "to": {
+        "nodeId": "node-11",
+        "pinId": "negative"
+      },
+      "points": [
+        {
+          "x": 720,
+          "y": 380
+        },
+        {
+          "x": 1040,
+          "y": 380
+        }
+      ]
+    }
+  ]
+}

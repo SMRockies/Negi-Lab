@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "node-2",
+      "type": "LED",
+      "x": 620,
+      "y": 300,
+      "state": null
+    },
+    {
+      "id": "node-3",
+      "type": "BATTERY",
+      "x": 980,
+      "y": 300,
+      "state": null
+    },
+    {
+      "id": "node-4",
+      "type": "SWITCH",
+      "x": 780,
+      "y": 260,
+      "state": "CLOSED"
+    }
+  ],
+  "wires": [
+    {
+      "id": "wire-1",
+      "from": {
+        "nodeId": "node-3",
+        "pinId": "positive"
+      },
+      "to": {
+        "nodeId": "node-4",
+        "pinId": "b"
+      },
+      "points": []
+    },
+    {
+      "id": "wire-2",
+      "from": {
+        "nodeId": "node-4",
+        "pinId": "a"
+      },
+      "to": {
+        "nodeId": "node-2",
+        "pinId": "anode"
+      },
+      "points": []
+    },
+    {
+      "id": "wire-3",
+      "from": {
+        "nodeId": "node-2",
+        "pinId": "cathode"
+      },
+      "to": {
+        "nodeId": "node-3",
+        "pinId": "negative"
+      },
+      "points": []
+    }
+  ]
+}
