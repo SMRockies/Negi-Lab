@@ -4,7 +4,11 @@
 
 This document explains, in a research-style but practical way, how the current SVG editor foundation was built in `Myine`, why the coordinate system works, and how the code evolved from a static visual proof into a minimal interactive editor core.
 
-The current implementation lives in `src/main.jsx`.
+The current implementation is split across:
+
+- `src/main.jsx` for the React editor, rendering, and UI-coupled simulation helpers
+- `src/simulationEngine.js` for reducer/history orchestration and cached graph synchronization
+- `src/engine/` for the standalone graph, net, and netlist engine layer
 
 ## Current Goal of the Editor
 
@@ -3240,13 +3244,14 @@ That is exactly the kind of change needed before simulation can become believabl
 
 ### The Current Creation Options
 
-The dropdown currently exposes five component types:
+The dropdown currently exposes six component types:
 
 - `Test Node`
 - `LED`
 - `Battery`
 - `Switch`
 - `Button`
+- `Resistor`
 
 This provides a minimal but meaningful palette for the current stage of the editor.
 
@@ -3275,6 +3280,7 @@ For example:
 - `BATTERY` gets `positive` and `negative`
 - `SWITCH` gets `a` and `b` plus an internal open/closed state
 - `BUTTON` gets `a` and `b` plus an internal momentary open/closed state
+- `RESISTOR` gets `a` and `b` plus a default resistance value in node state
 - `TEST` keeps the generic top and bottom test pins
 
 This is a very important step because it makes component identity part of the node model rather than something inferred later.
@@ -4177,55 +4183,101 @@ That is the point where the UI stops re-solving physics locally and starts readi
 
 As the editor grew in complexity and the simulation logic became more intricate, recomputing the entire circuit graph and simulation state on every single UI update (e.g., mouse movements, minor visual changes) led to performance bottlenecks. To address this, a "dirty flag" optimization system was introduced to cache expensive computations and only re-run them when the underlying circuit topology or component states genuinely changed.
 
-### The `createSimulationEngine` Module
+### The `createCircuitEngine` Module
 
-A new, framework-agnostic JavaScript module, `simulationEngine.js`, was created to encapsulate the dirty flag logic and caching mechanism. It exports a factory function `createSimulationEngine` that takes `buildGraph` and `computeSimulationState` as dependencies.
+The current framework-agnostic coordination module is `src/simulationEngine.js`. It exports a factory function `createCircuitEngine(...)` that accepts:
 
-The core of this module manages:
-- `isGraphDirty`: A boolean flag indicating whether the circuit's topological graph needs to be rebuilt.
-- `cachedGraph`: Stores the last computed graph.
-- `cachedSimulationState`: Stores the last computed simulation results.
+- `buildGraph`
+- `buildSimulationGraph`
+- `computeSimulationState`
 
-It exposes three methods:
-- `markDirty()`: Sets `isGraphDirty = true`, invalidating the cached graph and forcing a re-computation on the next request for data.
-- `getGraph(nodes, wires)`: Returns the cached graph if `isGraphDirty` is `false`. If `isGraphDirty` is `true`, it first rebuilds the graph, updates `cachedGraph`, sets `isGraphDirty = false`, and then returns the new graph.
-- `getSimulationState(nodes, wires)`: Internally calls `getGraph` to ensure the graph is up-to-date, then uses the (potentially new) graph to `computeSimulationState`. The result is cached in `cachedSimulationState` before being returned.
+The graph-building functions now come from the standalone `src/engine/` layer, while `computeSimulationState` remains in `src/main.jsx` because it is still coupled to editor/runtime behavior.
+
+Instead of exposing ad hoc cache getters, `createCircuitEngine(...)` works over the editor's history state and synchronizes derived data whenever the present circuit changes. The synchronized state includes:
+
+- `graph`: the derived topology graph
+- `simulationState`: the derived simulation pass
+
+Internally it still uses a dirty-flag style optimization:
+- `isGraphDirty`: tracks whether logical circuit data changed
+- graph recomputation is skipped for purely visual updates that do not alter connectivity
 
 ### Integration with React (`main.jsx`)
 
-1.  **Engine Initialization**: The `createSimulationEngine` is instantiated once using `useMemo` with an empty dependency array (`[]`) in the `Editor` component. This ensures the engine instance (and its internal cache) persists across renders:
+1.  **Engine Initialization**: `createCircuitEngine(...)` is instantiated once using `useMemo` with an empty dependency array (`[]`) in the `Editor` component. This ensures the engine instance persists across renders:
     ```jsx
     const engine = useMemo(
-      () => createSimulationEngine(buildGraph, computeSimulationState),
+      () =>
+        createCircuitEngine({
+          buildGraph,
+          buildSimulationGraph,
+          computeSimulationState,
+        }),
       []
     );
     ```
 
-2.  **Memoized Computations**: The `connectionGraph` and `simulationState` are now derived using `useMemo` and rely on the `engine`'s `getGraph` and `getSimulationState` methods, respectively. Their dependency arrays include `nodes`, `wires`, and `engine` to ensure React re-evaluates these memos only when these props change, or when the `engine` instance itself might hypothetically change (though it's stable via its own `useMemo`).
-    ```jsx
-    const connectionGraph = useMemo(() => engine.getGraph(nodes, wires), [nodes, wires, engine]);
-    // ...
-    const simulationState = useMemo(
-      () => engine.getSimulationState(nodes, wires),
-      [nodes, wires, engine]
-    );
-    ```
+2.  **Reducer-Driven Synchronization**: The editor no longer calls separate graph getters from `useMemo`. Instead, the engine produces and updates `graph` and `simulationState` as part of the circuit state returned by `engine.createState(...)` and `engine.dispatch(...)`.
 
-3.  **`markDirty()` Triggers**: The `engine.markDirty()` method is strategically called within event handlers that modify the circuit's *logical* or *topological* structure:
-    *   **Wire added or removed**: In `handleKeyDown` (for deleting wires) and `handlePinClick` (for creating new wires). Changes to `wires` directly affect connectivity.
-    *   **Node added or removed**: In `handleKeyDown` (for deleting nodes) and `handleCanvasClick` (for creating new nodes). Changes to `nodes` fundamentally alter the circuit's components and their connections.
-    *   **Node state changes (e.g., switch/button toggle)**: In `handleNodeClick` (for toggling switches) and `handleNodeMouseDown`/`handleGlobalMouseUp` (for pressing/releasing buttons). These actions change how components conduct electricity, effectively modifying the graph's internal edges.
-    *   **Node moved**: **Does NOT** call `markDirty()`. Moving a node only changes its `x` and `y` coordinates for rendering. The circuit's electrical connections (its topology) remain unchanged, so a graph rebuild is unnecessary. This is a significant optimization for drag operations.
+3.  **What Marks the Graph Dirty**: The engine invalidates derived graph state only when the action changes logical circuit structure:
+    *   **Wire added or removed**: connectivity changed
+    *   **Node added or removed**: available pins and component participation changed
+    *   **Node state changes** such as switch or button conduction changes: internal conductive edges changed
+    *   **Node moved**: does **not** dirty the graph, because position changes are visual only
 
 ### Performance Benefits and Stale-State Prevention
 
 This dirty flag system dramatically improves performance by:
 -   **Avoiding unnecessary recomputations**: Expensive graph building and simulation logic is skipped if only visual properties (like node position during a drag) change.
--   **Leveraging React's `useMemo`**: React efficiently re-runs memoized functions only when their dependencies change, further reducing overhead.
+-   **Keeping derived state centralized**: Graph and simulation recomputation happen inside the circuit engine rather than being spread across the React tree.
 
 A key "stale-state pitfall" (where old cached results are incorrectly used after a relevant state change) is prevented by:
--   **Carefully identifying all topological/conductive changes**: Ensuring `markDirty()` is called for *every* action that alters the circuit's electrical behavior.
--   **Centralized cache invalidation**: `markDirty()` directly invalidates the cache, forcing `getGraph` and `getSimulationState` to re-run their expensive operations on the next access.
+-   **Carefully identifying all topological/conductive changes**: engine actions that alter circuit connectivity or conduction invalidate the derived graph state.
+-   **Centralized synchronization**: `createCircuitEngine(...)` re-derives `graph` and `simulationState` together whenever the history state's logical circuit data changes.
+
+## Engine Layer Boundary
+
+The circuit logic now has a formal standalone engine layer in `src/engine/`.
+
+Current public engine API:
+
+- `buildGraph`
+- `buildSimulationGraph`
+- `buildReverseGraph`
+- `collectReachableNodes`
+- `buildNets`
+- `findNet`
+- `getNetIndex`
+- `arePinsInSameNet`
+- `getPoweredNetIndexes`
+- `generateNetlist`
+- `simulateCircuit`
+- `simulateVoltage`
+- `simulateCurrent`
+- `getPinKey`
+- `parsePinReference`
+
+Import convention:
+
+- editor/runtime code should import from `./engine`
+- low-level helpers inside `src/engine/buildGraph.js` remain private and are not part of the public contract
+
+Current module split:
+
+- `src/engine/buildGraph.js`: topology and simulation graph builders
+- `src/engine/findNets.js`: net extraction and net membership helpers
+- `src/engine/generateNetlist.ts`: simulation-ready netlist generation
+- `src/engine/simulateCircuit.ts`: first traversal-based electrical reasoning pass
+- `src/engine/simulateVoltage.ts`: first static voltage-propagation approximation
+- `src/engine/simulateCurrent.ts`: first single-loop current solver using Ohm's law
+- `src/engine/utils.js`: shared pin-key and pin-reference utilities
+- `src/engine/index.js`: single supported barrel export
+
+This matters architecturally because the engine is now the bridge between:
+
+- visual editor state
+- `.negi` persistence data
+- future simulator-facing netlist generation
 
 ## Stage 41: Diagnostics Layer for Circuit Validation
 
@@ -4519,6 +4571,106 @@ Why it exists:
 
 - converts raw connectivity into net structure
 - gives higher-level logic a more circuit-like abstraction
+
+### `generateNetlist`
+
+Responsibility:
+
+- convert derived nets into a simulation-ready circuit netlist
+
+Why it exists:
+
+- provides the engine-facing bridge between editor data and future simulation/export tooling
+- converts raw connected pin groups into normalized net objects
+- builds a per-component pin-to-net mapping so simulation rules can reason about component terminals directly
+- assigns stable sequential IDs such as `NET0`, `NET1`, and `NET2`
+- applies simple semantic labels such as `VCC` and `GND` when source pins are present
+
+Current output shape:
+
+```ts
+{
+  nets: [
+    { id: "NET0", label: "VCC", pins: [{ nodeId: "battery1", pinId: "positive" }] }
+  ],
+  components: [
+    {
+      id: "led1",
+      type: "LED",
+      state: null,
+      pins: {
+        anode: "NET0",
+        cathode: "NET1"
+      }
+    }
+  ]
+}
+```
+
+### `simulateCircuit`
+
+Responsibility:
+
+- traverse a generated netlist and determine which supported components are electrically active
+
+Why it exists:
+
+- upgrades the engine from pure connectivity reasoning to first-pass electrical reasoning
+- determines powered nets by traversing from battery positive through conductive components
+- marks LEDs on only when traversal reaches them in the forward `anode -> cathode` direction
+- reports whether the active traversal can complete a path back to battery negative
+
+Current first-version scope:
+
+- supported components: `BATTERY`, `LED`, `SWITCH`, `BUTTON`
+- switches conduct only when their current editor state is closed
+- buttons conduct only while pressed/closed
+- only a single battery source is supported in this first pass
+
+### `simulateVoltage`
+
+Responsibility:
+
+- estimate voltage present at each derived net
+
+Why it exists:
+
+- adds the first electrical-quantity layer on top of pure connectivity and traversal
+- propagates a source voltage from battery positive while anchoring battery negative at `0V`
+- allows components such as LEDs and resistors to introduce fixed placeholder voltage drops
+- prepares the engine for future wire or net voltage readouts in the UI
+
+Current first-version scope:
+
+- static DC approximation only
+- supported components in this layer: `BATTERY`, `LED`, `RESISTOR`, `SWITCH`, `BUTTON`
+- LED drop is fixed at `2.0V`
+- resistor drop is currently a placeholder fixed drop
+- switches and buttons pass voltage only while closed
+- no current, resistance solving, branch balancing, or multiple-battery support yet
+
+### `simulateCurrent`
+
+Responsibility:
+
+- estimate loop current from battery voltage, LED forward drop, and total loop resistance
+
+Why it exists:
+
+- introduces the first actual electronics-law solver into the engine
+- applies the single-loop relation `I = V / R`
+- turns derived voltage and resistance assumptions into a current value that can be attached to components
+- enables future current readouts for LEDs, resistors, and controlled conduction components
+
+Current first-version scope:
+
+- single loop only
+- one battery source only
+- supported types in this layer: `BATTERY`, `LED`, `RESISTOR`, `SWITCH`, `BUTTON`
+- LEDs contribute a fixed forward drop of `2.0V`
+- resistor values come from component state when present, otherwise default to `100 ohms`
+- open switches or buttons force solved current to `0`
+- no branch splitting, Kirchhoff mesh solving, transient behavior, or multi-loop analysis yet
 
 ### `findNet`
 
@@ -5012,6 +5164,9 @@ The code evolved through these mutations:
 97. Enhanced `computeSimulationState` to return `pathEdges` (closed loop segments) and `blockedEdges` (logical breaks).
 98. Defined specific blocking conditions for open switches, open buttons, and reverse-biased LEDs.
 99. Added `SimulationOverlay` component to highlight path segments in yellow and blocked segments as red dashed lines.
+100. Added a `RESISTOR` component with bidirectional conduction and default `{ resistance: 100 }` state.
+101. Resistors now render directly in the editor palette and canvas as two-pin passive components.
+102. Double-clicking a resistor in `select` mode now opens a simple resistance-value editor.
 
 ## Stage 50: Simulation Debug Overlay
 

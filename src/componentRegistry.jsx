@@ -101,6 +101,26 @@ function getTerminalNodeStyle(node, interaction) {
   };
 }
 
+function getResistorStyle(node, simulationState, interaction) {
+  const { isDragged, isSelected, isConnectedToSelectedWire } =
+    getInteractiveNodeInteractionState(node, interaction);
+  const hasPoweredPins = interaction.getPoweredPins(node).length > 0;
+
+  return {
+    fill: isSelected ? "#92400e" : isDragged ? "#fdba74" : "#78350f",
+    stroke:
+      isSelected || isDragged
+        ? "#ffedd5"
+        : hasPoweredPins
+          ? "#fde047"
+          : isConnectedToSelectedWire
+            ? "#7dd3fc"
+            : "#f59e0b",
+    strokeWidth:
+      isSelected || isDragged || isConnectedToSelectedWire || hasPoweredPins ? 2.5 : 1.75,
+  };
+}
+
 function renderBasicCircle(node, style, interaction, onNodeMouseDown) {
   return (
     <circle
@@ -112,6 +132,7 @@ function renderBasicCircle(node, style, interaction, onNodeMouseDown) {
       strokeWidth={style.strokeWidth}
       style={{ cursor: "grab" }}
       onMouseDown={(event) => onNodeMouseDown(event, node.id)}
+      onDoubleClick={(event) => interaction.onNodeDoubleClick?.(event, node.id)}
     />
   );
 }
@@ -132,6 +153,7 @@ function renderTerminalComponent(node, interaction, bodyStyle, indicator) {
         style={{ cursor: "grab" }}
         onMouseDown={(event) => interaction.onNodeMouseDown(event, node.id)}
         onClick={(event) => interaction.onNodeClick(event, node.id)}
+        onDoubleClick={(event) => interaction.onNodeDoubleClick?.(event, node.id)}
       />
       <line
         x1={node.x - 20}
@@ -395,6 +417,83 @@ export const BATTERY = {
   },
 };
 
+export const RESISTOR = {
+  type: "RESISTOR",
+  label: "Resistor",
+  stateInteraction: "static",
+  radius: 18,
+  defaultState: {
+    resistance: 100,
+  },
+  pins: [
+    { id: "a", role: "input", label: "A", dx: -20, dy: 0, radius: 5 },
+    { id: "b", role: "output", label: "B", dx: 20, dy: 0, radius: 5 },
+  ],
+  behavior: {
+    getConnections() {
+      return [
+        { from: "a", to: "b" },
+        { from: "b", to: "a" },
+      ];
+    },
+    getActivationSegments() {
+      return EMPTY_SEGMENTS;
+    },
+    getSourcePins() {
+      return null;
+    },
+  },
+  getNodeActivity(node, simulationState) {
+    return getPoweredNodeActivity(node, simulationState);
+  },
+  getDisplayLabel(node) {
+    const resistance =
+      typeof node.state?.resistance === "number" ? node.state.resistance : 100;
+    return `${resistance} ohm`;
+  },
+  render(node, simulationState, interaction) {
+    const style = getResistorStyle(node, simulationState, interaction);
+
+    return (
+      <>
+        <line
+          x1={node.x - 20}
+          y1={node.y}
+          x2={node.x - 10}
+          y2={node.y}
+          stroke={style.stroke}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          pointerEvents="none"
+        />
+        <rect
+          x={node.x - 10}
+          y={node.y - 6}
+          width="20"
+          height="12"
+          rx="2"
+          fill={style.fill}
+          stroke={style.stroke}
+          strokeWidth={style.strokeWidth}
+          style={{ cursor: "grab" }}
+          onMouseDown={(event) => interaction.onNodeMouseDown(event, node.id)}
+          onDoubleClick={(event) => interaction.onNodeDoubleClick?.(event, node.id)}
+        />
+        <line
+          x1={node.x + 10}
+          y1={node.y}
+          x2={node.x + 20}
+          y2={node.y}
+          stroke={style.stroke}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          pointerEvents="none"
+        />
+      </>
+    );
+  },
+};
+
 export const SWITCH = createTerminalComponent({
   type: "SWITCH",
   label: "Switch",
@@ -411,6 +510,7 @@ export const COMPONENTS = {
   BATTERY,
   SWITCH,
   BUTTON,
+  RESISTOR,
 };
 
 export const COMPONENT_OPTIONS = Object.values(COMPONENTS).map((component) => ({

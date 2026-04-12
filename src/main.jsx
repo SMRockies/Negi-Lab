@@ -13,6 +13,17 @@ import {
   normalizeCircuitFilename,
 } from "./persistence";
 import { ACTION_TYPES, createCircuitEngine } from "./simulationEngine";
+import {
+  arePinsInSameNet,
+  buildGraph,
+  buildNets,
+  buildReverseGraph,
+  buildSimulationGraph,
+  collectReachableNodes,
+  getPinKey,
+  getPoweredNetIndexes,
+  parsePinReference,
+} from "./engine";
 
 function getNextSequenceValue(items, prefix) {
   const maxValue = items.reduce((currentMax, item) => {
@@ -44,38 +55,11 @@ function getPinGlobalPosition(node, pin) {
   };
 }
 
-function getGlobalPinId(nodeId, pinId) {
-  return `${nodeId}:${pinId}`;
-}
-
-function getPinKey(nodeId, pinId) {
-  return `${nodeId}:${pinId}`;
-}
-
 function snap(value, gridSize = 20) {
   return Math.round(value / gridSize) * gridSize;
 }
 
-function parsePinReference(pinReference) {
-  if (!pinReference) {
-    return null;
-  }
 
-  if (typeof pinReference === "object" && pinReference.nodeId && pinReference.pinId) {
-    return pinReference;
-  }
-
-  if (typeof pinReference !== "string") {
-    return null;
-  }
-
-  const [nodeId, pinId] = pinReference.split(":");
-  if (!nodeId || !pinId) {
-    return null;
-  }
-
-  return { nodeId, pinId };
-}
 
 function getConnectedNodeIdsForWire(wire) {
   const from = parsePinReference(wire?.from);
@@ -111,213 +95,17 @@ function isValidConnection(fromPinId, toPinId, wires) {
 
   return !wires.some(
     (wire) =>
-      (getGlobalPinId(wire.from.nodeId, wire.from.pinId) === fromPinId &&
-        getGlobalPinId(wire.to.nodeId, wire.to.pinId) === toPinId) ||
-      (getGlobalPinId(wire.from.nodeId, wire.from.pinId) === toPinId &&
-        getGlobalPinId(wire.to.nodeId, wire.to.pinId) === fromPinId)
+      (getPinKey(wire.from.nodeId, wire.from.pinId) === fromPinId &&
+        getPinKey(wire.to.nodeId, wire.to.pinId) === toPinId) ||
+      (getPinKey(wire.from.nodeId, wire.from.pinId) === toPinId &&
+        getPinKey(wire.to.nodeId, wire.to.pinId) === fromPinId)
   );
 }
 
-function connectPinKeys(graph, firstPinKey, secondPinKey) {
-  if (!graph[firstPinKey]) {
-    graph[firstPinKey] = [];
-  }
 
-  if (!graph[secondPinKey]) {
-    graph[secondPinKey] = [];
-  }
-
-  graph[firstPinKey].push(secondPinKey);
-  graph[secondPinKey].push(firstPinKey);
-}
-
-function connectDirectedPinKeys(graph, fromPinKey, toPinKey) {
-  if (!graph[fromPinKey]) {
-    graph[fromPinKey] = [];
-  }
-
-  if (!graph[toPinKey]) {
-    graph[toPinKey] = [];
-  }
-
-  graph[fromPinKey].push(toPinKey);
-}
-
-function getNodeBehavior(node) {
-  return getComponentBehavior(node);
-}
-
-function injectBehaviorConnections(graph, node, connections) {
-  connections.forEach((connection) => {
-    connectDirectedPinKeys(
-      graph,
-      getPinKey(node.id, connection.from),
-      getPinKey(node.id, connection.to)
-    );
-  });
-}
-
-function buildGraph(wires, nodes) {
-  const graph = {};
-
-  wires.forEach((wire) => {
-    const from = parsePinReference(wire.from);
-    const to = parsePinReference(wire.to);
-
-    if (!from || !to) {
-      return;
-    }
-
-    const a = getPinKey(from.nodeId, from.pinId);
-    const b = getPinKey(to.nodeId, to.pinId);
-    connectPinKeys(graph, a, b);
-  });
-
-  nodes.forEach((node) => {
-    injectBehaviorConnections(graph, node, getNodeBehavior(node).getConnections(node, "topology"));
-  });
-
-  return graph;
-}
-
-function buildSimulationGraph(nodes, wires) {
-  const graph = {};
-
-  wires.forEach((wire) => {
-    const from = parsePinReference(wire.from);
-    const to = parsePinReference(wire.to);
-
-    if (!from || !to) {
-      return;
-    }
-
-    // Wires are always bidirectional conductors in the simulation graph.
-    connectPinKeys(graph, getPinKey(from.nodeId, from.pinId), getPinKey(to.nodeId, to.pinId));
-  });
-
-  nodes.forEach((node) => {
-    // Component behaviors inject their own conductive rules into the simulation graph.
-    injectBehaviorConnections(graph, node, getNodeBehavior(node).getConnections(node, "simulation"));
-  });
-
-  return graph;
-}
-
-function buildNets(graph) {
-  const visited = new Set();
-  const nets = [];
-
-  for (const pin in graph) {
-    if (visited.has(pin)) {
-      continue;
-    }
-
-    const net = [];
-    const stack = [pin];
-
-    while (stack.length > 0) {
-      const current = stack.pop();
-
-      if (visited.has(current)) {
-        continue;
-      }
-
-      visited.add(current);
-      net.push(current);
-
-      const neighbors = graph[current] || [];
-      stack.push(...neighbors);
-    }
-
-    nets.push(net);
-  }
-
-  return nets;
-}
-
-function getNetIndex(nets, pinKey) {
-  return nets.findIndex((net) => net.includes(pinKey));
-}
-
-function findNet(nets, pinKey) {
-  const netIndex = getNetIndex(nets, pinKey);
-  return netIndex === -1 ? null : nets[netIndex];
-}
-
-function arePinsInSameNet(nets, firstPinKey, secondPinKey) {
-  const firstNet = findNet(nets, firstPinKey);
-  const secondNet = findNet(nets, secondPinKey);
-
-  return Boolean(firstNet && secondNet && firstNet === secondNet);
-}
-
-function getPoweredNetIndexes(nets, nodes) {
-  const poweredNetIndexes = new Set();
-  const sourceNodes = nodes.filter((node) => Boolean(getNodeBehavior(node).getSourcePins(node)));
-
-  sourceNodes.forEach((sourceNode) => {
-    const sourcePins = getNodeBehavior(sourceNode).getSourcePins(sourceNode);
-    const positivePinKey = getPinKey(sourceNode.id, sourcePins.positive);
-    const poweredNetIndex = getNetIndex(nets, positivePinKey);
-
-    if (poweredNetIndex !== -1) {
-      poweredNetIndexes.add(poweredNetIndex);
-    }
-  });
-
-  return poweredNetIndexes;
-}
-
-function buildReverseGraph(graph) {
-  const reverseGraph = {};
-
-  for (const fromPinKey in graph) {
-    if (!reverseGraph[fromPinKey]) {
-      reverseGraph[fromPinKey] = [];
-    }
-
-    for (const toPinKey of graph[fromPinKey]) {
-      if (!reverseGraph[toPinKey]) {
-        reverseGraph[toPinKey] = [];
-      }
-
-      reverseGraph[toPinKey].push(fromPinKey);
-    }
-  }
-
-  return reverseGraph;
-}
-
-function collectReachableNodes(graph, startPinKey) {
-  if (!startPinKey) {
-    return new Set();
-  }
-
-  const visited = new Set();
-  const queue = [startPinKey];
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-
-    if (visited.has(current)) {
-      continue;
-    }
-
-    visited.add(current);
-
-    const neighbors = graph[current] || [];
-    for (const next of neighbors) {
-      if (!visited.has(next)) {
-        queue.push(next);
-      }
-    }
-  }
-
-  return visited;
-}
 
 function computeSimulationState(simulationGraph, nodes, wires) {
-  const sourceNode = nodes.find((node) => Boolean(getNodeBehavior(node).getSourcePins(node))) ?? null;
+  const sourceNode = nodes.find((node) => Boolean(getComponentBehavior(node).getSourcePins(node))) ?? null;
 
   if (!sourceNode) {
     return {
@@ -331,7 +119,7 @@ function computeSimulationState(simulationGraph, nodes, wires) {
     };
   }
 
-  const sourcePins = getNodeBehavior(sourceNode).getSourcePins(sourceNode);
+  const sourcePins = getComponentBehavior(sourceNode).getSourcePins(sourceNode);
   const positivePinKey = getPinKey(sourceNode.id, sourcePins.positive);
   const negativePinKey = getPinKey(sourceNode.id, sourcePins.negative);
   const forwardReachable = collectReachableNodes(simulationGraph, positivePinKey);
@@ -347,7 +135,7 @@ function computeSimulationState(simulationGraph, nodes, wires) {
   const activeNodes = new Map();
 
   nodes.forEach((node) => {
-    const behavior = getNodeBehavior(node);
+    const behavior = getComponentBehavior(node);
     const activationSegments = behavior.getActivationSegments(node);
 
     if (activationSegments.length > 0) {
@@ -393,7 +181,7 @@ function computeSimulationState(simulationGraph, nodes, wires) {
 
   // Internal paths and specific blocking conditions
   nodes.forEach((node) => {
-    const behavior = getNodeBehavior(node);
+    const behavior = getComponentBehavior(node);
     // Path edges (internal conductive segments)
     behavior.getConnections(node, "simulation").forEach((conn) => {
       const from = getPinKey(node.id, conn.from);
@@ -492,10 +280,10 @@ function getDiagnostics(nodes, simulationState, nets) {
     .map(group => [...group]);
 
   // 4. Detect Open Circuit
-  const sourceNode = nodes.find((node) => Boolean(getNodeBehavior(node).getSourcePins(node))) ?? null;
+  const sourceNode = nodes.find((node) => Boolean(getComponentBehavior(node).getSourcePins(node))) ?? null;
   let hasOpenCircuit = false;
   if (sourceNode) {
-    const sourcePins = getNodeBehavior(sourceNode).getSourcePins(sourceNode);
+    const sourcePins = getComponentBehavior(sourceNode).getSourcePins(sourceNode);
     const negativePinKey = getPinKey(sourceNode.id, sourcePins.negative);
     // If the battery exists but its return path (negative pin) isn't "powered", the circuit is open.
     hasOpenCircuit = !poweredPins.has(negativePinKey);
@@ -504,9 +292,9 @@ function getDiagnostics(nodes, simulationState, nets) {
   // 5. Detect Short Circuit
   // A short circuit occurs if the positive and negative terminals of a battery belong to the same net.
   let hasShortCircuit = false;
-  const sourceNodes = nodes.filter((node) => Boolean(getNodeBehavior(node).getSourcePins(node)));
+  const sourceNodes = nodes.filter((node) => Boolean(getComponentBehavior(node).getSourcePins(node)));
   for (const sourceNode of sourceNodes) {
-    const sourcePins = getNodeBehavior(sourceNode).getSourcePins(sourceNode);
+    const sourcePins = getComponentBehavior(sourceNode).getSourcePins(sourceNode);
     const posKey = getPinKey(sourceNode.id, sourcePins.positive);
     const negKey = getPinKey(sourceNode.id, sourcePins.negative);
     if (arePinsInSameNet(nets, posKey, negKey)) {
@@ -710,6 +498,7 @@ function NodeLayer({
   draggedNodeId,
   nodes,
   onNodeClick,
+  onNodeDoubleClick,
   onNodeMouseDown,
   onPinClick,
   selectedWire,
@@ -731,6 +520,7 @@ function NodeLayer({
           getConnectedNodeIdsForWire,
           getPoweredPins,
           onNodeClick,
+          onNodeDoubleClick,
           onNodeMouseDown,
           selectedNodeId,
           selectedWire,
@@ -1626,6 +1416,58 @@ function Editor() {
     });
   }
 
+  function handleNodeDoubleClick(event, nodeId) {
+    event.stopPropagation();
+
+    if (mode !== "select") {
+      return;
+    }
+
+    const node = nodes.find((currentNode) => currentNode.id === nodeId);
+
+    if (!node || node.type !== "RESISTOR") {
+      return;
+    }
+
+    const currentResistance =
+      typeof node.state?.resistance === "number" ? node.state.resistance : 100;
+    const response = window.prompt("Resistance (ohms)", String(currentResistance));
+
+    if (response === null) {
+      return;
+    }
+
+    const parsedResistance = Number.parseFloat(response.trim());
+
+    if (!Number.isFinite(parsedResistance) || parsedResistance <= 0) {
+      setRecentChange({
+        label: `Rejected invalid resistance for ${nodeId}`,
+        x: node.x,
+        y: node.y,
+      });
+      return;
+    }
+
+    setSelectedNodeId(nodeId);
+    setSelectedWireId(null);
+    setActivePinId(null);
+    dispatch({
+      type: ACTION_TYPES.UPDATE_NODE_STATE,
+      payload: {
+        nodeId,
+        state: {
+          ...(typeof node.state === "object" && node.state !== null ? node.state : {}),
+          resistance: parsedResistance,
+        },
+      },
+    });
+    setRecentChange({
+      label: `${nodeId} set to ${parsedResistance} ohm`,
+      x: node.x,
+      y: node.y,
+    });
+  }
+
   function handlePinClick(event, nodeId, pinId) {
     event.stopPropagation();
     setDraggedNodeId(null);
@@ -2068,6 +1910,7 @@ function Editor() {
           draggedNodeId={draggedNodeId}
           nodes={nodes}
           onNodeClick={handleNodeClick}
+          onNodeDoubleClick={handleNodeDoubleClick}
           onNodeMouseDown={handleNodeMouseDown}
           onPinClick={handlePinClick}
           selectedWire={selectedWire}
