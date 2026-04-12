@@ -4896,6 +4896,7 @@ Input:
 - `selectedNodeId`
 - `selectedWireId`
 - `hoveredWireId`
+- `hoveredResistor`
 
 Output:
 
@@ -4904,6 +4905,9 @@ Output:
 Additional behavior:
 
 - reports the current interaction mode
+- collapses hover feedback into a single context-sensitive `Hover` line
+- shows hovered wire identity when the pointer is over a wire
+- shows hovered resistor resistance and solved current when the pointer is over a resistor
 - stays anchored to the viewport while the canvas scrolls
 
 ### `ModeToolbar`
@@ -5167,6 +5171,8 @@ The code evolved through these mutations:
 100. Added a `RESISTOR` component with bidirectional conduction and default `{ resistance: 100 }` state.
 101. Resistors now render directly in the editor palette and canvas as two-pin passive components.
 102. Double-clicking a resistor in `select` mode now opens a simple resistance-value editor.
+103. The HUD hover readout now uses a single `Hover` line instead of a dedicated hovered-wire-only field.
+104. Hovering a resistor now surfaces both resistance and solved current in the HUD.
 
 ## Stage 50: Simulation Debug Overlay
 

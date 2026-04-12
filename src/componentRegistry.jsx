@@ -476,6 +476,8 @@ export const RESISTOR = {
           stroke={style.stroke}
           strokeWidth={style.strokeWidth}
           style={{ cursor: "grab" }}
+          onMouseEnter={() => interaction.onNodeHover?.(node.id)}
+          onMouseLeave={() => interaction.onNodeHover?.(null)}
           onMouseDown={(event) => interaction.onNodeMouseDown(event, node.id)}
           onDoubleClick={(event) => interaction.onNodeDoubleClick?.(event, node.id)}
         />

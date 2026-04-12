@@ -20,9 +20,11 @@ import {
   buildReverseGraph,
   buildSimulationGraph,
   collectReachableNodes,
+  generateNetlist,
   getPinKey,
   getPoweredNetIndexes,
   parsePinReference,
+  simulateCurrent,
 } from "./engine";
 
 function getNextSequenceValue(items, prefix) {
@@ -499,6 +501,7 @@ function NodeLayer({
   nodes,
   onNodeClick,
   onNodeDoubleClick,
+  onNodeHover,
   onNodeMouseDown,
   onPinClick,
   selectedWire,
@@ -521,6 +524,7 @@ function NodeLayer({
           getPoweredPins,
           onNodeClick,
           onNodeDoubleClick,
+          onNodeHover,
           onNodeMouseDown,
           selectedNodeId,
           selectedWire,
@@ -593,6 +597,7 @@ function CoordinateReadout({
   futureCount,
   poweredNetCount,
   graphVertexCount,
+  hoveredResistor,
   hoveredWireId,
   mode,
   nodeCount,
@@ -648,9 +653,27 @@ function CoordinateReadout({
       <div>{`Inactive nodes: ${diagnostics.inactiveNodes.length > 0 ? diagnostics.inactiveNodes.join(', ') : 'none'}`}</div>
       <div>{`Partial nodes: ${diagnostics.partialNodes.length > 0 ? diagnostics.partialNodes.join(', ') : 'none'}`}</div>
       <div>{`Floating groups: ${diagnostics.floatingGroups.length}`}</div>
-      <div>{hoveredWireId ? `Hovered wire: ${hoveredWireId}` : "Hovered wire: none"}</div>
+      <div>
+        {hoveredResistor
+          ? `Hovering resistor: ${hoveredResistor.resistanceLabel}, Current: ${hoveredResistor.currentLabel}`
+          : hoveredWireId
+            ? `Hovering wire: ${hoveredWireId}`
+            : "Hover: none"}
+      </div>
     </div>
   );
+}
+
+function formatCurrentValue(current) {
+  if (!Number.isFinite(current) || current <= 0) {
+    return "0 A";
+  }
+
+  if (current < 1) {
+    return `${(current * 1000).toFixed(0)} mA`;
+  }
+
+  return `${current.toFixed(2)} A`;
 }
 
 function HistoryToolbar({ canRedo, canUndo, onRedo, onUndo }) {
@@ -943,6 +966,7 @@ function Editor() {
   const [draggedControlPoint, setDraggedControlPoint] = useState(null);
   const [dragStart, setDragStart] = useState(null);
   const [draggedNodeId, setDraggedNodeId] = useState(null);
+  const [hoveredResistorId, setHoveredResistorId] = useState(null);
   const [hoveredWireId, setHoveredWireId] = useState(null);
   const [isPanningCanvas, setIsPanningCanvas] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -1766,6 +1790,7 @@ function Editor() {
 
     setCanvasPanStart(null);
     setDraggedControlPoint(null);
+    setHoveredResistorId(null);
     setDragStart(null);
     setPointerPosition(null);
     setDraggedNodeId(null);
@@ -1776,6 +1801,8 @@ function Editor() {
 
   const activePinPosition = useMemo(() => getActivePinPosition(), [nodes, activePinId]);
   const nets = useMemo(() => buildNets(connectionGraph), [connectionGraph]);
+  const netlist = useMemo(() => generateNetlist(nodes, nets), [nodes, nets]);
+  const currentResult = useMemo(() => simulateCurrent(netlist), [netlist]);
   const poweredNetIndexes = useMemo(() => getPoweredNetIndexes(nets, nodes), [nets, nodes]);
   const graphVertexCount = useMemo(
     () => Object.keys(connectionGraph ?? {}).length,
@@ -1793,6 +1820,28 @@ function Editor() {
     () => wires.find((wire) => wire.id === selectedWireId) ?? null,
     [wires, selectedWireId]
   );
+
+  const hoveredResistor = useMemo(() => {
+    if (!hoveredResistorId) {
+      return null;
+    }
+
+    const resistorNode =
+      nodes.find((node) => node.id === hoveredResistorId && node.type === "RESISTOR") ?? null;
+
+    if (!resistorNode) {
+      return null;
+    }
+
+    const resistance =
+      typeof resistorNode.state?.resistance === "number" ? resistorNode.state.resistance : 100;
+    const current = currentResult.componentCurrents[resistorNode.id] ?? 0;
+
+    return {
+      resistanceLabel: `${resistance} \u03a9`,
+      currentLabel: formatCurrentValue(current),
+    };
+  }, [currentResult.componentCurrents, hoveredResistorId, nodes]);
 
   const wirePreviewPoints =
     activePinPosition && pointerPosition
@@ -1830,6 +1879,7 @@ function Editor() {
         pastCount={past.length}
         poweredNetCount={poweredNetCount}
         graphVertexCount={graphVertexCount}
+        hoveredResistor={hoveredResistor}
         hoveredWireId={hoveredWireId}
         mode={mode}
         nodeCount={nodes.length}
@@ -1911,6 +1961,7 @@ function Editor() {
           nodes={nodes}
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeDoubleClick}
+          onNodeHover={setHoveredResistorId}
           onNodeMouseDown={handleNodeMouseDown}
           onPinClick={handlePinClick}
           selectedWire={selectedWire}
