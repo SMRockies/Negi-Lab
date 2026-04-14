@@ -28,22 +28,33 @@ It is a graph-powered visual circuit design platform where:
 - Select / Create / Wire modes
 - Grid-based canvas workspace
 - Zoom and pan support
+- Live hover inspector for components and wires
 
 ### Components Supported
 - Battery
 - LED
 - Switch
+- Button
+- Resistor
 
 ### Logic Engine
 - Real-time power propagation
 - Powered net detection
 - LED ON/OFF state logic
 - Switch OPEN/CLOSED state logic
+- Hover readouts for current and voltage values when available
 
 ### File System
 - Save circuits as `.negi`
 - Load `.negi` files
 - Example circuit library included
+
+### Hover Inspector
+- Centralized `hoveredEntity` UI state for wires and nodes
+- Floating tooltip near the cursor
+- Component metadata display: type and id
+- Live circuit readouts for resistor, LED, battery, switch, and button components
+- Missing simulation values fall back to `--` without changing the simulation engine
 
 ---
 

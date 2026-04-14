@@ -131,6 +131,8 @@ function renderBasicCircle(node, style, interaction, onNodeMouseDown) {
       stroke={style.stroke}
       strokeWidth={style.strokeWidth}
       style={{ cursor: "grab" }}
+      onMouseEnter={() => interaction.onNodeHover?.(node.id)}
+      onMouseLeave={() => interaction.onNodeHover?.(null)}
       onMouseDown={(event) => onNodeMouseDown(event, node.id)}
       onDoubleClick={(event) => interaction.onNodeDoubleClick?.(event, node.id)}
     />
@@ -151,6 +153,8 @@ function renderTerminalComponent(node, interaction, bodyStyle, indicator) {
         stroke={bodyStyle.stroke}
         strokeWidth={bodyStyle.strokeWidth}
         style={{ cursor: "grab" }}
+        onMouseEnter={() => interaction.onNodeHover?.(node.id)}
+        onMouseLeave={() => interaction.onNodeHover?.(null)}
         onMouseDown={(event) => interaction.onNodeMouseDown(event, node.id)}
         onClick={(event) => interaction.onNodeClick(event, node.id)}
         onDoubleClick={(event) => interaction.onNodeDoubleClick?.(event, node.id)}

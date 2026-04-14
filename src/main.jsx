@@ -25,6 +25,7 @@ import {
   getPoweredNetIndexes,
   parsePinReference,
   simulateCurrent,
+  simulateVoltage,
 } from "./engine";
 
 function getNextSequenceValue(items, prefix) {
@@ -517,7 +518,11 @@ function NodeLayer({
     const displayLabel = component.getDisplayLabel(node);
 
     return (
-      <g key={node.id}>
+      <g
+        key={node.id}
+        onMouseEnter={() => onNodeHover(node.id)}
+        onMouseLeave={() => onNodeHover(null)}
+      >
         {component.render(node, simulationState, {
           draggedNodeId,
           getConnectedNodeIdsForWire,
@@ -597,8 +602,7 @@ function CoordinateReadout({
   futureCount,
   poweredNetCount,
   graphVertexCount,
-  hoveredResistor,
-  hoveredWireId,
+  hoveredInspector,
   mode,
   nodeCount,
   pointerPosition,
@@ -653,27 +657,276 @@ function CoordinateReadout({
       <div>{`Inactive nodes: ${diagnostics.inactiveNodes.length > 0 ? diagnostics.inactiveNodes.join(', ') : 'none'}`}</div>
       <div>{`Partial nodes: ${diagnostics.partialNodes.length > 0 ? diagnostics.partialNodes.join(', ') : 'none'}`}</div>
       <div>{`Floating groups: ${diagnostics.floatingGroups.length}`}</div>
-      <div>
-        {hoveredResistor
-          ? `Hovering resistor: ${hoveredResistor.resistanceLabel}, Current: ${hoveredResistor.currentLabel}`
-          : hoveredWireId
-            ? `Hovering wire: ${hoveredWireId}`
-            : "Hover: none"}
-      </div>
+      {hoveredInspector?.debugLines?.length
+        ? hoveredInspector.debugLines.map((line) => <div key={line}>{line}</div>)
+        : <div>Hover: none</div>}
     </div>
   );
 }
 
-function formatCurrentValue(current) {
-  if (!Number.isFinite(current) || current <= 0) {
+function formatCurrentValue(current, fallback = "--") {
+  if (!Number.isFinite(current)) {
+    return fallback;
+  }
+
+  if (current === 0) {
     return "0 A";
   }
 
-  if (current < 1) {
+  const absoluteCurrent = Math.abs(current);
+
+  if (absoluteCurrent < 1) {
     return `${(current * 1000).toFixed(0)} mA`;
   }
 
   return `${current.toFixed(2)} A`;
+}
+
+function formatVoltageValue(voltage, fallback = "--") {
+  if (!Number.isFinite(voltage)) {
+    return fallback;
+  }
+
+  return `${voltage.toFixed(2)} V`;
+}
+
+function formatResistanceValue(resistance, fallback = "--") {
+  if (!Number.isFinite(resistance)) {
+    return fallback;
+  }
+
+  return `${resistance} \u03a9`;
+}
+
+function getBatteryVoltage(node) {
+  return typeof node?.state?.voltage === "number" ? node.state.voltage : 9;
+}
+
+function getNodeNetVoltage(node, pinId, componentNetMap, netVoltages) {
+  const netId = componentNetMap?.pins?.[pinId];
+  const voltage = netId ? netVoltages[netId] : undefined;
+  return Number.isFinite(voltage) ? voltage : null;
+}
+
+function getNodeVoltageDrop(node, componentNetMap, netVoltages) {
+  if (!node || !componentNetMap) {
+    return null;
+  }
+
+  switch (node.type) {
+    case "RESISTOR":
+    case "SWITCH":
+    case "BUTTON": {
+      const aVoltage = getNodeNetVoltage(node, "a", componentNetMap, netVoltages);
+      const bVoltage = getNodeNetVoltage(node, "b", componentNetMap, netVoltages);
+      return aVoltage === null || bVoltage === null ? null : Math.abs(aVoltage - bVoltage);
+    }
+
+    case "LED": {
+      const anodeVoltage = getNodeNetVoltage(node, "anode", componentNetMap, netVoltages);
+      const cathodeVoltage = getNodeNetVoltage(node, "cathode", componentNetMap, netVoltages);
+      return anodeVoltage === null || cathodeVoltage === null
+        ? null
+        : Math.abs(anodeVoltage - cathodeVoltage);
+    }
+
+    case "BATTERY": {
+      const positiveVoltage = getNodeNetVoltage(node, "positive", componentNetMap, netVoltages);
+      const negativeVoltage = getNodeNetVoltage(node, "negative", componentNetMap, netVoltages);
+      return positiveVoltage === null || negativeVoltage === null
+        ? getBatteryVoltage(node)
+        : Math.abs(positiveVoltage - negativeVoltage);
+    }
+
+    default:
+      return null;
+  }
+}
+
+function buildHoveredInspector({
+  hoveredEntity,
+  nodes,
+  wires,
+  componentNetMapById,
+  currentResult,
+  netVoltages,
+  simulationState,
+}) {
+  if (!hoveredEntity) {
+    return null;
+  }
+
+  if (hoveredEntity.kind === "wire") {
+    const wire = wires.find((currentWire) => currentWire.id === hoveredEntity.id);
+
+    if (!wire) {
+      return null;
+    }
+
+    return {
+      debugLines: [`Hovering Wire: ${wire.id}`],
+      tooltipRows: [
+        { label: "Type", value: "WIRE" },
+        { label: "ID", value: wire.id },
+      ],
+    };
+  }
+
+  const node = nodes.find((currentNode) => currentNode.id === hoveredEntity.id);
+
+  if (!node) {
+    return null;
+  }
+
+  const componentNetMap = componentNetMapById.get(node.id) ?? null;
+  const componentCurrent = currentResult.componentCurrents[node.id];
+  const voltageDrop = getNodeVoltageDrop(node, componentNetMap, netVoltages);
+  const ledIsOn = Boolean(simulationState.activeNodes.get(node.id)?.active);
+  const tooltipRows = [
+    { label: "Type", value: node.type },
+    { label: "ID", value: node.id },
+  ];
+
+  switch (node.type) {
+    case "RESISTOR": {
+      const resistance =
+        typeof node.state?.resistance === "number" ? node.state.resistance : 100;
+
+      tooltipRows.push(
+        { label: "Resistance", value: formatResistanceValue(resistance) },
+        { label: "Current", value: formatCurrentValue(componentCurrent) },
+        { label: "Voltage Drop", value: formatVoltageValue(voltageDrop) },
+      );
+
+      return {
+        debugLines: [
+          `Hovering Resistor: ${formatResistanceValue(resistance)}`,
+          `Current: ${formatCurrentValue(componentCurrent)}`,
+          `Voltage Drop: ${formatVoltageValue(voltageDrop)}`,
+        ],
+        tooltipRows,
+      };
+    }
+
+    case "LED": {
+      tooltipRows.push(
+        { label: "State", value: ledIsOn ? "ON" : "OFF" },
+        { label: "Forward Voltage", value: formatVoltageValue(voltageDrop) },
+        { label: "Current", value: formatCurrentValue(componentCurrent) },
+      );
+
+      return {
+        debugLines: [
+          `Hovering LED: ${ledIsOn ? "ON" : "OFF"}`,
+          `Forward Voltage: ${formatVoltageValue(voltageDrop)}`,
+          `Current: ${formatCurrentValue(componentCurrent)}`,
+        ],
+        tooltipRows,
+      };
+    }
+
+    case "BATTERY": {
+      const batteryVoltage = getBatteryVoltage(node);
+
+      tooltipRows.push(
+        { label: "Voltage", value: formatVoltageValue(batteryVoltage) },
+        { label: "Output Current", value: formatCurrentValue(currentResult.totalCurrent) },
+      );
+
+      return {
+        debugLines: [
+          `Hovering Battery: ${formatVoltageValue(batteryVoltage)}`,
+          `Output Current: ${formatCurrentValue(currentResult.totalCurrent)}`,
+        ],
+        tooltipRows,
+      };
+    }
+
+    case "SWITCH": {
+      const isClosed = node.state === "CLOSED";
+
+      tooltipRows.push(
+        { label: "State", value: isClosed ? "CLOSED" : "OPEN" },
+        { label: "Current Passing", value: formatCurrentValue(componentCurrent) },
+      );
+
+      return {
+        debugLines: [
+          `Hovering Switch: ${isClosed ? "CLOSED" : "OPEN"}`,
+          `Current Passing: ${formatCurrentValue(componentCurrent)}`,
+        ],
+        tooltipRows,
+      };
+    }
+
+    case "BUTTON": {
+      const isPressed = node.state === "CLOSED";
+
+      tooltipRows.push(
+        { label: "State", value: isPressed ? "PRESSED" : "RELEASED" },
+        { label: "Current Passing", value: formatCurrentValue(componentCurrent) },
+      );
+
+      return {
+        debugLines: [
+          `Hovering Button: ${isPressed ? "PRESSED" : "RELEASED"}`,
+          `Current Passing: ${formatCurrentValue(componentCurrent)}`,
+        ],
+        tooltipRows,
+      };
+    }
+
+    default:
+      return {
+        debugLines: [`Hovering ${node.type}: ${node.id}`],
+        tooltipRows,
+      };
+  }
+}
+
+function HoverInspectorTooltip({ hoveredInspector, pointerClientPosition, viewport }) {
+  if (!hoveredInspector || !pointerClientPosition) {
+    return null;
+  }
+
+  const tooltipWidth = 220;
+  const tooltipHeight = 140;
+  const offset = 16;
+  const left = Math.min(pointerClientPosition.x + offset, viewport.width - tooltipWidth - 12);
+  const top = Math.min(pointerClientPosition.y + offset, viewport.height - tooltipHeight - 12);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left: Math.max(12, left),
+        top: Math.max(12, top),
+        minWidth: 180,
+        maxWidth: tooltipWidth,
+        padding: "10px 12px",
+        border: "1px solid rgba(34, 211, 238, 0.35)",
+        borderRadius: 8,
+        background: "rgba(7, 11, 18, 0.92)",
+        boxShadow: "0 14px 30px rgba(0, 0, 0, 0.32)",
+        color: "#e5e7eb",
+        fontFamily: "monospace",
+        fontSize: 12,
+        lineHeight: 1.45,
+        pointerEvents: "none",
+        zIndex: 4,
+      }}
+    >
+      {hoveredInspector.tooltipRows.map((row) => (
+        <div
+          key={`${row.label}:${row.value}`}
+          style={{ display: "flex", justifyContent: "space-between", gap: 12 }}
+        >
+          <span style={{ color: "#67e8f9" }}>{row.label}</span>
+          <span style={{ textAlign: "right" }}>{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function HistoryToolbar({ canRedo, canUndo, onRedo, onUndo }) {
@@ -966,10 +1219,10 @@ function Editor() {
   const [draggedControlPoint, setDraggedControlPoint] = useState(null);
   const [dragStart, setDragStart] = useState(null);
   const [draggedNodeId, setDraggedNodeId] = useState(null);
-  const [hoveredResistorId, setHoveredResistorId] = useState(null);
-  const [hoveredWireId, setHoveredWireId] = useState(null);
+  const [hoveredEntity, setHoveredEntity] = useState(null);
   const [isPanningCanvas, setIsPanningCanvas] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [pointerClientPosition, setPointerClientPosition] = useState(null);
   const [pointerPosition, setPointerPosition] = useState(null);
   const [selectedNodeId, setSelectedNodeId] = useState("node-1");
   const [selectedWireId, setSelectedWireId] = useState(null);
@@ -997,6 +1250,14 @@ function Editor() {
 
   function dispatch(action) {
     setCircuitState((previousState) => engine.dispatch(previousState, action));
+  }
+
+  function handleNodeHover(nodeId) {
+    setHoveredEntity(nodeId ? { kind: "node", id: nodeId } : null);
+  }
+
+  function handleWireHover(wireId) {
+    setHoveredEntity(wireId ? { kind: "wire", id: wireId } : null);
   }
 
   function finalizeDragTransaction() {
@@ -1161,8 +1422,10 @@ function Editor() {
           type: ACTION_TYPES.REMOVE_WIRE,
           payload: { wireId: selectedWireId },
         });
-        setHoveredWireId((previousHoveredWireId) =>
-          previousHoveredWireId === selectedWireId ? null : previousHoveredWireId
+        setHoveredEntity((previousHoveredEntity) =>
+          previousHoveredEntity?.kind === "wire" && previousHoveredEntity.id === selectedWireId
+            ? null
+            : previousHoveredEntity
         );
         setSelectedWireId(null);
         const toPinPosition = resolvePinPosition(nodes, wireToDelete.to);
@@ -1192,7 +1455,9 @@ function Editor() {
         previousActivePinId?.startsWith(`${selectedNodeId}:`) ? null : previousActivePinId
       );
       setDraggedNodeId(null);
-      setHoveredWireId(null);
+      setHoveredEntity((previousHoveredEntity) =>
+        previousHoveredEntity?.id === selectedNodeId ? null : previousHoveredEntity
+      );
       setSelectedNodeId(null);
       setRecentChange({
         label: `Deleted ${selectedNodeId}`,
@@ -1222,7 +1487,21 @@ function Editor() {
     ) {
       setActivePinId(null);
     }
-  }, [activePinId, nodes, selectedNodeId, selectedWireId, wires]);
+
+    if (
+      hoveredEntity?.kind === "node" &&
+      !nodes.some((node) => node.id === hoveredEntity.id)
+    ) {
+      setHoveredEntity(null);
+    }
+
+    if (
+      hoveredEntity?.kind === "wire" &&
+      !wires.some((wire) => wire.id === hoveredEntity.id)
+    ) {
+      setHoveredEntity(null);
+    }
+  }, [activePinId, hoveredEntity, nodes, selectedNodeId, selectedWireId, wires]);
 
   function getSvgCoordinates(svg, event) {
     if (!svg) {
@@ -1266,7 +1545,7 @@ function Editor() {
     setDraggedControlPoint(null);
     setDragStart(null);
     setDraggedNodeId(null);
-    setHoveredWireId(null);
+    setHoveredEntity(null);
     setIsPanningCanvas(false);
     setIsDragging(false);
     setSelectedWireId(null);
@@ -1619,6 +1898,10 @@ function Editor() {
       return;
     }
 
+    setPointerClientPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
     setPointerPosition(coordinates);
 
     if (canvasPanStart && containerRef.current) {
@@ -1790,8 +2073,9 @@ function Editor() {
 
     setCanvasPanStart(null);
     setDraggedControlPoint(null);
-    setHoveredResistorId(null);
+    setHoveredEntity(null);
     setDragStart(null);
+    setPointerClientPosition(null);
     setPointerPosition(null);
     setDraggedNodeId(null);
     setIsPanningCanvas(false);
@@ -1803,6 +2087,7 @@ function Editor() {
   const nets = useMemo(() => buildNets(connectionGraph), [connectionGraph]);
   const netlist = useMemo(() => generateNetlist(nodes, nets), [nodes, nets]);
   const currentResult = useMemo(() => simulateCurrent(netlist), [netlist]);
+  const voltageResult = useMemo(() => simulateVoltage(netlist), [netlist]);
   const poweredNetIndexes = useMemo(() => getPoweredNetIndexes(nets, nodes), [nets, nodes]);
   const graphVertexCount = useMemo(
     () => Object.keys(connectionGraph ?? {}).length,
@@ -1820,28 +2105,24 @@ function Editor() {
     () => wires.find((wire) => wire.id === selectedWireId) ?? null,
     [wires, selectedWireId]
   );
-
-  const hoveredResistor = useMemo(() => {
-    if (!hoveredResistorId) {
-      return null;
-    }
-
-    const resistorNode =
-      nodes.find((node) => node.id === hoveredResistorId && node.type === "RESISTOR") ?? null;
-
-    if (!resistorNode) {
-      return null;
-    }
-
-    const resistance =
-      typeof resistorNode.state?.resistance === "number" ? resistorNode.state.resistance : 100;
-    const current = currentResult.componentCurrents[resistorNode.id] ?? 0;
-
-    return {
-      resistanceLabel: `${resistance} \u03a9`,
-      currentLabel: formatCurrentValue(current),
-    };
-  }, [currentResult.componentCurrents, hoveredResistorId, nodes]);
+  const hoveredWireId = hoveredEntity?.kind === "wire" ? hoveredEntity.id : null;
+  const componentNetMapById = useMemo(
+    () => new Map(netlist.components.map((component) => [component.id, component])),
+    [netlist]
+  );
+  const hoveredInspector = useMemo(
+    () =>
+      buildHoveredInspector({
+        hoveredEntity,
+        nodes,
+        wires,
+        componentNetMapById,
+        currentResult,
+        netVoltages: voltageResult.netVoltages,
+        simulationState,
+      }),
+    [componentNetMapById, currentResult, hoveredEntity, nodes, simulationState, voltageResult, wires]
+  );
 
   const wirePreviewPoints =
     activePinPosition && pointerPosition
@@ -1879,8 +2160,7 @@ function Editor() {
         pastCount={past.length}
         poweredNetCount={poweredNetCount}
         graphVertexCount={graphVertexCount}
-        hoveredResistor={hoveredResistor}
-        hoveredWireId={hoveredWireId}
+        hoveredInspector={hoveredInspector}
         mode={mode}
         nodeCount={nodes.length}
         pointerPosition={pointerPosition}
@@ -1907,6 +2187,11 @@ function Editor() {
         onExport={handleExportCircuit}
         onExportFilenameChange={setExportFilename}
         onImport={handleImportClick}
+      />
+      <HoverInspectorTooltip
+        hoveredInspector={hoveredInspector}
+        pointerClientPosition={pointerClientPosition}
+        viewport={viewport}
       />
       <ZoomToolbar
         onZoomIn={handleZoomIn}
@@ -1946,7 +2231,7 @@ function Editor() {
           onControlPointDoubleClick={handleControlPointDoubleClick}
           onControlPointMouseDown={handleControlPointMouseDown}
           onWireClick={handleWireClick}
-          onWireHover={setHoveredWireId}
+          onWireHover={handleWireHover}
           selectedNodeId={selectedNodeId}
           selectedWireId={selectedWireId}
           simulationState={simulationState}
@@ -1961,7 +2246,7 @@ function Editor() {
           nodes={nodes}
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeDoubleClick}
-          onNodeHover={setHoveredResistorId}
+          onNodeHover={handleNodeHover}
           onNodeMouseDown={handleNodeMouseDown}
           onPinClick={handlePinClick}
           selectedWire={selectedWire}
