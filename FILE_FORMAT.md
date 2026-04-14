@@ -2,7 +2,7 @@
 
 ## Overview
 
-`.negi` is a JSON-based circuit description format for Myine.
+`.negi` is a JSON-based circuit description format for Negi-Lab.
 
 Its purpose is to store the authored circuit structure in a portable form so circuits can be:
 

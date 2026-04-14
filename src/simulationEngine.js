@@ -7,6 +7,7 @@ export const ACTION_TYPES = {
   PRESS_BUTTON: "PRESS_BUTTON",
   RELEASE_BUTTON: "RELEASE_BUTTON",
   UPDATE_NODE_STATE: "UPDATE_NODE_STATE",
+  ROTATE_NODE: "ROTATE_NODE",
   MOVE_NODE: "MOVE_NODE",
   UPDATE_WIRE_POINTS: "UPDATE_WIRE_POINTS",
   REMOVE_WIRE_POINT: "REMOVE_WIRE_POINT",
@@ -117,6 +118,16 @@ export function reducer(state, action) {
         ),
       };
 
+    case ACTION_TYPES.ROTATE_NODE:
+      return {
+        ...state,
+        nodes: state.nodes.map((node) =>
+          node.id === action.payload.nodeId
+            ? { ...node, rotation: ((node.rotation ?? 0) + 90) % 360 }
+            : node
+        ),
+      };
+
     case ACTION_TYPES.MOVE_NODE:
       return {
         ...state,
@@ -176,6 +187,7 @@ function actionChangesDerivedState(action) {
     case ACTION_TYPES.PRESS_BUTTON:
     case ACTION_TYPES.RELEASE_BUTTON:
     case ACTION_TYPES.UPDATE_NODE_STATE:
+    case ACTION_TYPES.ROTATE_NODE:
     case ACTION_TYPES.MOVE_NODE:
     case ACTION_TYPES.LOAD_CIRCUIT:
       return true;

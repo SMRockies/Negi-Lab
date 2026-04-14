@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import {
-  COMPONENT_OPTIONS,
   createNode,
   getComponent,
   getComponentBehavior,
@@ -52,14 +51,69 @@ function GridPattern() {
 }
 
 function getPinGlobalPosition(node, pin) {
+  const rotatedOffset = rotatePointOffset(pin.dx, pin.dy, getNodeRotation(node));
+
   return {
-    x: node.x + pin.dx,
-    y: node.y + pin.dy,
+    x: node.x + rotatedOffset.dx,
+    y: node.y + rotatedOffset.dy,
   };
 }
 
 function snap(value, gridSize = 20) {
   return Math.round(value / gridSize) * gridSize;
+}
+
+const SIDEBAR_WIDTH = 300;
+const SIDEBAR_EDGE_OFFSET = 12;
+const SIDEBAR_GAP = 24;
+const SIDEBAR_CANVAS_OFFSET = SIDEBAR_WIDTH + SIDEBAR_EDGE_OFFSET + SIDEBAR_GAP;
+const WORKSPACE_SIDEBAR_TOP = 152;
+const SIDEBAR_COMPONENTS = [
+  { value: "WIRE", label: "Wire", mode: "wire" },
+  { value: "RESISTOR", label: "Resistor", mode: "create-node" },
+  { value: "BATTERY", label: "Battery", mode: "create-node" },
+  { value: "LED", label: "LED", mode: "create-node" },
+  { value: "SWITCH", label: "Switch", mode: "create-node" },
+];
+
+function getNodeRotation(node) {
+  return typeof node?.rotation === "number" ? node.rotation : 0;
+}
+
+function rotatePointOffset(dx, dy, rotation) {
+  const normalizedRotation = ((rotation % 360) + 360) % 360;
+
+  switch (normalizedRotation) {
+    case 90:
+      return { dx: -dy, dy: dx };
+    case 180:
+      return { dx: -dx, dy: -dy };
+    case 270:
+      return { dx: dy, dy: -dx };
+    default:
+      return { dx, dy };
+  }
+}
+
+function getNodeStateObject(node) {
+  return typeof node?.state === "object" && node.state !== null ? node.state : {};
+}
+
+function getSelectedNode(nodes, selectedNodeId) {
+  return nodes.find((node) => node.id === selectedNodeId) ?? null;
+}
+
+function getButtonBaseStyle() {
+  return {
+    border: "1px solid #2f2f2f",
+    borderRadius: 10,
+    background: "#181818",
+    color: "#d4d4d4",
+    cursor: "pointer",
+    fontFamily: "monospace",
+    fontSize: 12,
+    padding: "8px 10px",
+  };
 }
 
 
@@ -523,17 +577,19 @@ function NodeLayer({
         onMouseEnter={() => onNodeHover(node.id)}
         onMouseLeave={() => onNodeHover(null)}
       >
-        {component.render(node, simulationState, {
-          draggedNodeId,
-          getConnectedNodeIdsForWire,
-          getPoweredPins,
-          onNodeClick,
-          onNodeDoubleClick,
-          onNodeHover,
-          onNodeMouseDown,
-          selectedNodeId,
-          selectedWire,
-        })}
+        <g transform={`rotate(${getNodeRotation(node)} ${node.x} ${node.y})`}>
+          {component.render(node, simulationState, {
+            draggedNodeId,
+            getConnectedNodeIdsForWire,
+            getPoweredPins,
+            onNodeClick,
+            onNodeDoubleClick,
+            onNodeHover,
+            onNodeMouseDown,
+            selectedNodeId,
+            selectedWire,
+          })}
+        </g>
         <text
           x={node.x}
           y={node.y + 3}
@@ -593,7 +649,7 @@ function NodeLayer({
   });
 }
 
-function CoordinateReadout({
+function DebugReadoutContent({
   diagnostics,
   activePinId,
   canRedo,
@@ -614,22 +670,7 @@ function CoordinateReadout({
   zoom,
 }) {
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 12,
-        left: 12,
-        padding: "8px 10px",
-        borderRadius: 6,
-        background: "rgba(0, 0, 0, 0.65)",
-        color: "#d4d4d4",
-        fontFamily: "monospace",
-        fontSize: 12,
-        lineHeight: 1.5,
-        pointerEvents: "none",
-        zIndex: 2,
-      }}
-    >
+    <>
       <div>
         {recentChange
           ? `Recent change: ${recentChange.label} (${recentChange.x}, ${recentChange.y})`
@@ -660,7 +701,51 @@ function CoordinateReadout({
       {hoveredInspector?.debugLines?.length
         ? hoveredInspector.debugLines.map((line) => <div key={line}>{line}</div>)
         : <div>Hover: none</div>}
-    </div>
+    </>
+  );
+}
+
+function CoordinateReadout(props) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const toggleStyle = getButtonBaseStyle();
+
+  return (
+    <>
+      <button
+        style={{
+          ...toggleStyle,
+          position: "fixed",
+          top: 12,
+          left: 12,
+          zIndex: 3,
+          minWidth: 74,
+        }}
+        onClick={() => setIsCollapsed((previousValue) => !previousValue)}
+        type="button"
+      >
+        {isCollapsed ? "Debug +" : "Debug -"}
+      </button>
+      {!isCollapsed && (
+        <div
+          style={{
+            position: "fixed",
+            top: 56,
+            left: 12,
+            padding: "8px 10px",
+            borderRadius: 6,
+            background: "rgba(0, 0, 0, 0.65)",
+            color: "#d4d4d4",
+            fontFamily: "monospace",
+            fontSize: 12,
+            lineHeight: 1.5,
+            pointerEvents: "none",
+            zIndex: 2,
+          }}
+        >
+          <DebugReadoutContent {...props} />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -931,15 +1016,8 @@ function HoverInspectorTooltip({ hoveredInspector, pointerClientPosition, viewpo
 
 function HistoryToolbar({ canRedo, canUndo, onRedo, onUndo }) {
   const buttonStyle = {
-    border: "1px solid #2f2f2f",
-    borderRadius: 6,
-    background: "#181818",
-    color: "#d4d4d4",
-    cursor: "pointer",
-    fontFamily: "monospace",
-    fontSize: 12,
+    ...getButtonBaseStyle(),
     minWidth: 70,
-    padding: "8px 10px",
   };
 
   const disabledStyle = {
@@ -978,66 +1056,8 @@ function HistoryToolbar({ canRedo, canUndo, onRedo, onUndo }) {
   );
 }
 
-function PersistenceToolbar({ exportFilename, onExport, onExportFilenameChange, onImport }) {
-  const buttonStyle = {
-    border: "1px solid #2f2f2f",
-    borderRadius: 6,
-    background: "#181818",
-    color: "#d4d4d4",
-    cursor: "pointer",
-    fontFamily: "monospace",
-    fontSize: 12,
-    minWidth: 70,
-    padding: "8px 10px",
-  };
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: 144,
-        right: 12,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        zIndex: 2,
-      }}
-    >
-      <input
-        value={exportFilename}
-        onChange={(event) => onExportFilenameChange(event.target.value)}
-        placeholder="circuit.negi"
-        style={{
-          ...buttonStyle,
-          minWidth: 170,
-          cursor: "text",
-          outline: "none",
-        }}
-        type="text"
-      />
-      <div style={{ display: "flex", gap: 8 }}>
-        <button style={buttonStyle} onClick={onExport} type="button">
-          Save
-        </button>
-        <button style={buttonStyle} onClick={onImport} type="button">
-          Load
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function ModeToolbar({ mode, onModeChange }) {
-  const baseButtonStyle = {
-    border: "1px solid #2f2f2f",
-    borderRadius: 6,
-    background: "#181818",
-    color: "#d4d4d4",
-    cursor: "pointer",
-    fontFamily: "monospace",
-    fontSize: 12,
-    padding: "8px 10px",
-  };
+  const baseButtonStyle = getButtonBaseStyle();
 
   function getButtonStyle(buttonMode) {
     return {
@@ -1072,50 +1092,368 @@ function ModeToolbar({ mode, onModeChange }) {
   );
 }
 
-function CreateNodeToolbar({ componentType, onComponentTypeChange }) {
+function WorkspaceSection({ children, title }) {
   return (
     <div
       style={{
+        background: "linear-gradient(180deg, rgba(24, 24, 24, 0.96), rgba(13, 16, 22, 0.98))",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+        borderRadius: 16,
+        padding: 16,
+        boxShadow: "0 18px 40px rgba(0, 0, 0, 0.28)",
+      }}
+    >
+      <div
+        style={{
+          color: "#f3f4f6",
+          fontFamily: "system-ui, sans-serif",
+          fontWeight: 700,
+          fontSize: 12,
+          letterSpacing: "0.08em",
+          marginBottom: 12,
+          textTransform: "uppercase",
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function InspectorNumberField({
+  label,
+  min,
+  onSubmit,
+  step,
+  value,
+}) {
+  const [draftValue, setDraftValue] = useState(String(value));
+
+  useEffect(() => {
+    setDraftValue(String(value));
+  }, [value]);
+
+  function commitValue() {
+    const parsedValue = Number.parseFloat(String(draftValue).trim());
+
+    if (!Number.isFinite(parsedValue) || (typeof min === "number" && parsedValue < min)) {
+      setDraftValue(String(value));
+      return;
+    }
+
+    onSubmit(parsedValue);
+  }
+
+  return (
+    <label style={{ display: "grid", gap: 6 }}>
+      <span style={{ color: "#a5b4c3", fontSize: 12, fontFamily: "monospace" }}>{label}</span>
+      <input
+        value={draftValue}
+        onBlur={commitValue}
+        onChange={(event) => setDraftValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            commitValue();
+          }
+        }}
+        min={min}
+        step={step}
+        style={{
+          background: "#0f141b",
+          border: "1px solid rgba(255, 255, 255, 0.1)",
+          borderRadius: 10,
+          color: "#f3f4f6",
+          fontFamily: "monospace",
+          fontSize: 13,
+          outline: "none",
+          padding: "10px 12px",
+        }}
+        type="number"
+      />
+    </label>
+  );
+}
+
+function WorkspaceSidebar({
+  componentSearch,
+  componentType,
+  currentFilename,
+  mode,
+  onComponentSearchChange,
+  onComponentSelect,
+  onDeleteSelection,
+  onImport,
+  onRotateSelectedNode,
+  onSave,
+  onSaveAs,
+  onUpdateBatteryVoltage,
+  onUpdateResistorValue,
+  onExport,
+  selectedNode,
+  selectedWire,
+}) {
+  const buttonStyle = getButtonBaseStyle();
+  const primaryButtonStyle = {
+    ...buttonStyle,
+    background: "linear-gradient(180deg, #0f766e, #115e59)",
+    borderColor: "#22d3ee",
+    color: "#ecfeff",
+  };
+  const inspectorButtonStyle = {
+    ...buttonStyle,
+    width: "100%",
+  };
+  const filteredComponents = SIDEBAR_COMPONENTS.filter((component) =>
+    component.label.toLowerCase().includes(componentSearch.trim().toLowerCase())
+  );
+
+  return (
+    <aside
+      style={{
         position: "fixed",
-        top: 56,
-        right: 12,
+        top: WORKSPACE_SIDEBAR_TOP,
+        right: SIDEBAR_EDGE_OFFSET,
+        bottom: 12,
+        width: SIDEBAR_WIDTH,
         display: "flex",
-        gap: 8,
-        alignItems: "center",
+        flexDirection: "column",
+        gap: 14,
+        overflowY: "auto",
+        paddingRight: 4,
         zIndex: 2,
       }}
     >
-      <label
-        htmlFor="create-node-type"
-        style={{
-          color: "#d4d4d4",
-          fontFamily: "monospace",
-          fontSize: 12,
-        }}
-      >
-        Create:
-      </label>
-      <select
-        id="create-node-type"
-        value={componentType}
-        onChange={(event) => onComponentTypeChange(event.target.value)}
-        style={{
-          border: "1px solid #2f2f2f",
-          borderRadius: 6,
-          background: "#181818",
-          color: "#d4d4d4",
-          fontFamily: "monospace",
-          fontSize: 12,
-          padding: "8px 10px",
-        }}
-      >
-        {COMPONENT_OPTIONS.map((componentOption) => (
-          <option key={componentOption.value} value={componentOption.value}>
-            {componentOption.label}
-          </option>
-        ))}
-      </select>
-    </div>
+      <WorkspaceSection title="Project Panel">
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gap: 4 }}>
+            <div style={{ color: "#f8fafc", fontSize: 20, fontWeight: 700 }}>
+              Negi-Lab
+            </div>
+            <div
+              style={{
+                background: "rgba(15, 23, 42, 0.9)",
+                border: "1px solid rgba(255, 255, 255, 0.08)",
+                borderRadius: 12,
+                color: "#cbd5e1",
+                fontFamily: "monospace",
+                fontSize: 13,
+                padding: "10px 12px",
+              }}
+            >
+              {currentFilename}
+            </div>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 8,
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            }}
+          >
+            <button style={primaryButtonStyle} onClick={onSave} type="button">
+              Save
+            </button>
+            <button style={buttonStyle} onClick={onSaveAs} type="button">
+              Save As
+            </button>
+            <button style={buttonStyle} onClick={onImport} type="button">
+              Load
+            </button>
+            <button style={buttonStyle} onClick={onExport} type="button">
+              Export
+            </button>
+          </div>
+        </div>
+      </WorkspaceSection>
+
+      <WorkspaceSection title="Component Library">
+        <div style={{ display: "grid", gap: 12 }}>
+          <input
+            value={componentSearch}
+            onChange={(event) => onComponentSearchChange(event.target.value)}
+            placeholder="Search components"
+            style={{
+              background: "#0f141b",
+              border: "1px solid rgba(255, 255, 255, 0.1)",
+              borderRadius: 12,
+              color: "#f3f4f6",
+              fontFamily: "monospace",
+              fontSize: 13,
+              outline: "none",
+              padding: "10px 12px",
+            }}
+            type="text"
+          />
+          <div
+            style={{
+              background: "rgba(10, 14, 20, 0.78)",
+              border: "1px solid rgba(255, 255, 255, 0.06)",
+              borderRadius: 14,
+              display: "grid",
+              gap: 10,
+              maxHeight: 250,
+              overflowY: "auto",
+              padding: 12,
+            }}
+          >
+            <div
+              style={{
+                color: "#94a3b8",
+                fontFamily: "monospace",
+                fontSize: 12,
+                textTransform: "uppercase",
+              }}
+            >
+              Basic
+            </div>
+            {filteredComponents.map((component) => {
+              const isCurrentComponent =
+                component.mode === "wire"
+                  ? mode === "wire"
+                  : mode === "create-node" && componentType === component.value;
+
+              return (
+                <button
+                  key={component.value}
+                  style={{
+                    ...buttonStyle,
+                    background: isCurrentComponent ? "rgba(15, 118, 110, 0.32)" : "#161b22",
+                    borderColor: isCurrentComponent ? "#22d3ee" : "#2f2f2f",
+                    textAlign: "left",
+                  }}
+                  onClick={() => onComponentSelect(component)}
+                  type="button"
+                >
+                  {component.label}
+                </button>
+              );
+            })}
+            {filteredComponents.length === 0 && (
+              <div style={{ color: "#64748b", fontFamily: "monospace", fontSize: 12 }}>
+                No components found.
+              </div>
+            )}
+          </div>
+        </div>
+      </WorkspaceSection>
+
+      <WorkspaceSection title="Properties Inspector">
+        {!selectedNode && !selectedWire && (
+          <div style={{ color: "#94a3b8", fontFamily: "monospace", fontSize: 13 }}>
+            No component selected
+          </div>
+        )}
+
+        {selectedWire && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ color: "#f8fafc", fontWeight: 600 }}>{selectedWire.id}</div>
+            <div style={{ color: "#94a3b8", fontFamily: "monospace", fontSize: 12 }}>
+              Wire info
+            </div>
+            <div style={{ color: "#cbd5e1", fontFamily: "monospace", fontSize: 12 }}>
+              {`${selectedWire.from.nodeId}:${selectedWire.from.pinId} -> ${selectedWire.to.nodeId}:${selectedWire.to.pinId}`}
+            </div>
+            <button style={inspectorButtonStyle} onClick={onDeleteSelection} type="button">
+              Delete
+            </button>
+          </div>
+        )}
+
+        {selectedNode?.type === "RESISTOR" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <span style={{ color: "#a5b4c3", fontSize: 12, fontFamily: "monospace" }}>
+                Component name
+              </span>
+              <div style={{ color: "#f8fafc", fontFamily: "monospace", fontSize: 13 }}>
+                {selectedNode.id}
+              </div>
+            </div>
+            <InspectorNumberField
+              label="Resistance value"
+              min={0.01}
+              onSubmit={onUpdateResistorValue}
+              step="any"
+              value={typeof selectedNode.state?.resistance === "number" ? selectedNode.state.resistance : 100}
+            />
+            <button style={inspectorButtonStyle} onClick={onRotateSelectedNode} type="button">
+              Rotate
+            </button>
+            <button style={inspectorButtonStyle} onClick={onDeleteSelection} type="button">
+              Delete
+            </button>
+          </div>
+        )}
+
+        {selectedNode?.type === "BATTERY" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <InspectorNumberField
+              label="Voltage"
+              min={0.01}
+              onSubmit={onUpdateBatteryVoltage}
+              step="any"
+              value={getBatteryVoltage(selectedNode)}
+            />
+            <button style={inspectorButtonStyle} onClick={onRotateSelectedNode} type="button">
+              Rotate
+            </button>
+            <button style={inspectorButtonStyle} onClick={onDeleteSelection} type="button">
+              Delete
+            </button>
+          </div>
+        )}
+
+        {selectedNode?.type === "LED" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ color: "#f8fafc", fontWeight: 600 }}>{selectedNode.id}</div>
+            <button style={inspectorButtonStyle} onClick={onRotateSelectedNode} type="button">
+              Rotate
+            </button>
+            <button style={inspectorButtonStyle} onClick={onDeleteSelection} type="button">
+              Delete
+            </button>
+          </div>
+        )}
+
+        {selectedNode?.type === "SWITCH" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ color: "#f8fafc", fontWeight: 600 }}>{selectedNode.id}</div>
+            <button style={inspectorButtonStyle} onClick={onRotateSelectedNode} type="button">
+              Rotate
+            </button>
+            <button style={inspectorButtonStyle} onClick={onDeleteSelection} type="button">
+              Delete
+            </button>
+          </div>
+        )}
+
+        {selectedNode?.type === "TEST" && (
+          <div style={{ display: "grid", gap: 12 }}>
+            <div style={{ color: "#f8fafc", fontWeight: 600 }}>{selectedNode.id}</div>
+            <button style={inspectorButtonStyle} onClick={onRotateSelectedNode} type="button">
+              Rotate
+            </button>
+            <button style={inspectorButtonStyle} onClick={onDeleteSelection} type="button">
+              Delete
+            </button>
+          </div>
+        )}
+
+        {selectedNode &&
+          !["RESISTOR", "BATTERY", "LED", "SWITCH", "TEST"].includes(selectedNode.type) && (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ color: "#f8fafc", fontWeight: 600 }}>{selectedNode.id}</div>
+              <button style={inspectorButtonStyle} onClick={onRotateSelectedNode} type="button">
+                Rotate
+              </button>
+              <button style={inspectorButtonStyle} onClick={onDeleteSelection} type="button">
+                Delete
+              </button>
+            </div>
+          )}
+      </WorkspaceSection>
+    </aside>
   );
 }
 
@@ -1149,14 +1487,7 @@ function WireHint({ selectedWireId }) {
 
 function ZoomToolbar({ onZoomIn, onZoomOut, onZoomReset, zoom }) {
   const buttonStyle = {
-    border: "1px solid #2f2f2f",
-    borderRadius: 6,
-    background: "#181818",
-    color: "#d4d4d4",
-    cursor: "pointer",
-    fontFamily: "monospace",
-    fontSize: 12,
-    padding: "8px 10px",
+    ...getButtonBaseStyle(),
     minWidth: 44,
   };
 
@@ -1212,7 +1543,8 @@ function Editor() {
       wires: [],
     })
   );
-  const [componentTypeToCreate, setComponentTypeToCreate] = useState("TEST");
+  const [componentTypeToCreate, setComponentTypeToCreate] = useState("RESISTOR");
+  const [componentSearch, setComponentSearch] = useState("");
   const [mode, setMode] = useState("select");
   const [activePinId, setActivePinId] = useState(null);
   const [canvasPanStart, setCanvasPanStart] = useState(null);
@@ -1282,12 +1614,32 @@ function Editor() {
     dispatch({ type: ACTION_TYPES.REDO });
   }
 
+  function exportCircuit(filename) {
+    const normalizedFilename = normalizeCircuitFilename(filename);
+    exportCircuitToFile(present, normalizedFilename);
+    setExportFilename(normalizedFilename);
+    return normalizedFilename;
+  }
+
   function handleExportCircuit() {
-    const filename = normalizeCircuitFilename(exportFilename);
-    exportCircuitToFile(present, filename);
-    setExportFilename(filename);
+    const filename = exportCircuit(exportFilename);
     setRecentChange((previousChange) => ({
       label: `Saved ${filename}`,
+      x: previousChange?.x ?? 0,
+      y: previousChange?.y ?? 0,
+    }));
+  }
+
+  function handleSaveAsCircuit() {
+    const response = window.prompt("Save circuit as", exportFilename);
+
+    if (response === null) {
+      return;
+    }
+
+    const filename = exportCircuit(response);
+    setRecentChange((previousChange) => ({
+      label: `Saved as ${filename}`,
       x: previousChange?.x ?? 0,
       y: previousChange?.y ?? 0,
     }));
@@ -1323,6 +1675,7 @@ function Editor() {
         },
       });
 
+      setExportFilename(normalizeCircuitFilename(file.name));
       setActivePinId(null);
       setDraggedControlPoint(null);
       setDraggedNodeId(null);
@@ -1343,6 +1696,145 @@ function Editor() {
     } finally {
       event.target.value = "";
     }
+  }
+
+  function handleDeleteSelection() {
+    if (selectedWireId) {
+      const wireToDelete = wires.find((wire) => wire.id === selectedWireId);
+
+      if (!wireToDelete) {
+        return;
+      }
+
+      dispatch({
+        type: ACTION_TYPES.REMOVE_WIRE,
+        payload: { wireId: selectedWireId },
+      });
+      setHoveredEntity((previousHoveredEntity) =>
+        previousHoveredEntity?.kind === "wire" && previousHoveredEntity.id === selectedWireId
+          ? null
+          : previousHoveredEntity
+      );
+      setSelectedWireId(null);
+      const toPinPosition = resolvePinPosition(nodes, wireToDelete.to);
+      setRecentChange({
+        label: `Deleted ${selectedWireId}`,
+        x: toPinPosition?.x ?? 0,
+        y: toPinPosition?.y ?? 0,
+      });
+      return;
+    }
+
+    if (!selectedNodeId) {
+      return;
+    }
+
+    const nodeToDelete = getSelectedNode(nodes, selectedNodeId);
+
+    if (!nodeToDelete) {
+      return;
+    }
+
+    dispatch({
+      type: ACTION_TYPES.REMOVE_NODE,
+      payload: { nodeId: selectedNodeId },
+    });
+    setActivePinId((previousActivePinId) =>
+      previousActivePinId?.startsWith(`${selectedNodeId}:`) ? null : previousActivePinId
+    );
+    setDraggedNodeId(null);
+    setHoveredEntity((previousHoveredEntity) =>
+      previousHoveredEntity?.id === selectedNodeId ? null : previousHoveredEntity
+    );
+    setSelectedNodeId(null);
+    setRecentChange({
+      label: `Deleted ${selectedNodeId}`,
+      x: nodeToDelete.x,
+      y: nodeToDelete.y,
+    });
+  }
+
+  function handleRotateSelectedNode() {
+    if (!selectedNodeId) {
+      return;
+    }
+
+    const selectedNode = getSelectedNode(nodes, selectedNodeId);
+
+    if (!selectedNode) {
+      return;
+    }
+
+    dispatch({
+      type: ACTION_TYPES.ROTATE_NODE,
+      payload: { nodeId: selectedNodeId },
+    });
+    setRecentChange({
+      label: `Rotated ${selectedNodeId}`,
+      x: selectedNode.x,
+      y: selectedNode.y,
+    });
+  }
+
+  function handleUpdateSelectedNodeState(nextState) {
+    if (!selectedNodeId) {
+      return;
+    }
+
+    dispatch({
+      type: ACTION_TYPES.UPDATE_NODE_STATE,
+      payload: {
+        nodeId: selectedNodeId,
+        state: nextState,
+      },
+    });
+  }
+
+  function handleUpdateResistorValue(nextResistance) {
+    const selectedNode = getSelectedNode(nodes, selectedNodeId);
+
+    if (!selectedNode || selectedNode.type !== "RESISTOR") {
+      return;
+    }
+
+    handleUpdateSelectedNodeState({
+      ...getNodeStateObject(selectedNode),
+      resistance: nextResistance,
+    });
+    setRecentChange({
+      label: `${selectedNode.id} set to ${nextResistance} ohm`,
+      x: selectedNode.x,
+      y: selectedNode.y,
+    });
+  }
+
+  function handleUpdateBatteryVoltage(nextVoltage) {
+    const selectedNode = getSelectedNode(nodes, selectedNodeId);
+
+    if (!selectedNode || selectedNode.type !== "BATTERY") {
+      return;
+    }
+
+    handleUpdateSelectedNodeState({
+      ...getNodeStateObject(selectedNode),
+      voltage: nextVoltage,
+    });
+    setRecentChange({
+      label: `${selectedNode.id} set to ${nextVoltage} V`,
+      x: selectedNode.x,
+      y: selectedNode.y,
+    });
+  }
+
+  function handleSidebarComponentSelect(component) {
+    if (component.mode === "wire") {
+      handleModeChange("wire");
+      return;
+    }
+
+    setComponentTypeToCreate(component.value);
+    setComponentSearch("");
+    handleModeChange("create-node");
   }
 
   useEffect(() => {
@@ -1411,59 +1903,8 @@ function Editor() {
         return;
       }
 
-      if (selectedWireId) {
-        const wireToDelete = wires.find((wire) => wire.id === selectedWireId);
-        if (!wireToDelete) {
-          return;
-        }
-
-        event.preventDefault();
-        dispatch({
-          type: ACTION_TYPES.REMOVE_WIRE,
-          payload: { wireId: selectedWireId },
-        });
-        setHoveredEntity((previousHoveredEntity) =>
-          previousHoveredEntity?.kind === "wire" && previousHoveredEntity.id === selectedWireId
-            ? null
-            : previousHoveredEntity
-        );
-        setSelectedWireId(null);
-        const toPinPosition = resolvePinPosition(nodes, wireToDelete.to);
-        setRecentChange({
-          label: `Deleted ${selectedWireId}`,
-          x: toPinPosition?.x ?? 0,
-          y: toPinPosition?.y ?? 0,
-        });
-        return;
-      }
-
-      if (!selectedNodeId) {
-        return;
-      }
-
-      const nodeToDelete = nodes.find((node) => node.id === selectedNodeId);
-      if (!nodeToDelete) {
-        return;
-      }
-
       event.preventDefault();
-      dispatch({
-        type: ACTION_TYPES.REMOVE_NODE,
-        payload: { nodeId: selectedNodeId },
-      });
-      setActivePinId((previousActivePinId) =>
-        previousActivePinId?.startsWith(`${selectedNodeId}:`) ? null : previousActivePinId
-      );
-      setDraggedNodeId(null);
-      setHoveredEntity((previousHoveredEntity) =>
-        previousHoveredEntity?.id === selectedNodeId ? null : previousHoveredEntity
-      );
-      setSelectedNodeId(null);
-      setRecentChange({
-        label: `Deleted ${selectedNodeId}`,
-        x: nodeToDelete.x,
-        y: nodeToDelete.y,
-      });
+      handleDeleteSelection();
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -2101,6 +2542,10 @@ function Editor() {
     [nodes, simulationState, nets]
   );
 
+  const selectedNode = useMemo(
+    () => getSelectedNode(nodes, selectedNodeId),
+    [nodes, selectedNodeId]
+  );
   const selectedWire = useMemo(
     () => wires.find((wire) => wire.id === selectedWireId) ?? null,
     [wires, selectedWireId]
@@ -2141,6 +2586,7 @@ function Editor() {
         overflow: "auto",
         background: "#111",
         margin: 0,
+        paddingRight: SIDEBAR_CANVAS_OFFSET,
       }}
     >
       <input
@@ -2170,23 +2616,31 @@ function Editor() {
         wireCount={wires.length}
         zoom={zoom}
       />
+      <WorkspaceSidebar
+        componentSearch={componentSearch}
+        componentType={componentTypeToCreate}
+        currentFilename={exportFilename}
+        mode={mode}
+        onComponentSearchChange={setComponentSearch}
+        onComponentSelect={handleSidebarComponentSelect}
+        onDeleteSelection={handleDeleteSelection}
+        onExport={handleExportCircuit}
+        onImport={handleImportClick}
+        onRotateSelectedNode={handleRotateSelectedNode}
+        onSave={handleExportCircuit}
+        onSaveAs={handleSaveAsCircuit}
+        onUpdateBatteryVoltage={handleUpdateBatteryVoltage}
+        onUpdateResistorValue={handleUpdateResistorValue}
+        selectedNode={selectedNode}
+        selectedWire={selectedWire}
+      />
       <WireHint selectedWireId={selectedWireId} />
       <ModeToolbar mode={mode} onModeChange={handleModeChange} />
-      <CreateNodeToolbar
-        componentType={componentTypeToCreate}
-        onComponentTypeChange={setComponentTypeToCreate}
-      />
       <HistoryToolbar
         canRedo={future.length > 0}
         canUndo={past.length > 0}
         onRedo={handleRedo}
         onUndo={handleUndo}
-      />
-      <PersistenceToolbar
-        exportFilename={exportFilename}
-        onExport={handleExportCircuit}
-        onExportFilenameChange={setExportFilename}
-        onImport={handleImportClick}
       />
       <HoverInspectorTooltip
         hoveredInspector={hoveredInspector}

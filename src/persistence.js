@@ -8,6 +8,7 @@ function serializeNode(node) {
     type: node.type,
     x: node.x,
     y: node.y,
+    rotation: node.rotation ?? 0,
     state: node.state ?? null,
   };
 }
@@ -32,6 +33,10 @@ function validateNode(node, index) {
 
   if (typeof node.x !== "number" || typeof node.y !== "number") {
     throw new Error(`Node ${index} is missing valid coordinates.`);
+  }
+
+  if (node.rotation !== undefined && typeof node.rotation !== "number") {
+    throw new Error(`Node ${index} has an invalid rotation.`);
   }
 }
 
@@ -119,6 +124,7 @@ export function loadCircuit(json) {
       type: node.type,
       x: node.x,
       y: node.y,
+      rotation: typeof node.rotation === "number" ? node.rotation : 0,
       state: node.state ?? null,
     })),
     wires: data.wires.map((wire) => ({

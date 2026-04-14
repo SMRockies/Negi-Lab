@@ -348,6 +348,9 @@ export const BATTERY = {
   label: "Battery",
   stateInteraction: "static",
   radius: 18,
+  defaultState: {
+    voltage: 9,
+  },
   pins: [
     { id: "positive", role: "source", label: "+", dx: 0, dy: -20, radius: 5 },
     { id: "negative", role: "sink", label: "-", dx: 0, dy: 20, radius: 5 },
@@ -541,6 +544,7 @@ export function createNode(type, id, x, y) {
     type: component.type,
     x,
     y,
+    rotation: 0,
     radius: component.radius,
     state: component.defaultState ?? null,
     pins: component.pins.map((pin) => ({ ...pin })),
@@ -557,6 +561,7 @@ export function hydrateNode(serializedNode) {
 
   return {
     ...hydratedNode,
+    rotation: typeof serializedNode.rotation === "number" ? serializedNode.rotation : 0,
     state: serializedNode.state ?? hydratedNode.state ?? null,
   };
 }

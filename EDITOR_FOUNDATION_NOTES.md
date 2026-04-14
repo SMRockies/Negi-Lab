@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document explains, in a research-style but practical way, how the current SVG editor foundation was built in `Myine`, why the coordinate system works, and how the code evolved from a static visual proof into a minimal interactive editor core.
+This document explains, in a research-style but practical way, how the current SVG editor foundation was built in `Negi-Lab`, why the coordinate system works, and how the code evolved from a static visual proof into a minimal interactive editor core.
 
 The current implementation is split across:
 
@@ -4895,7 +4895,8 @@ Input:
 - `wireCount`
 - `selectedNodeId`
 - `selectedWireId`
-- `hoveredInspector`
+- `hoveredWireId`
+- `hoveredResistor`
 
 Output:
 
@@ -4904,94 +4905,10 @@ Output:
 Additional behavior:
 
 - reports the current interaction mode
-- shows `Hover: none` when nothing is under the pointer
-- renders context-specific hover diagnostics for wires and supported components
-- reads preformatted inspector lines instead of branching separately for wires and resistors
+- collapses hover feedback into a single context-sensitive `Hover` line
+- shows hovered wire identity when the pointer is over a wire
+- shows hovered resistor resistance and solved current when the pointer is over a resistor
 - stays anchored to the viewport while the canvas scrolls
-
-### Unified Hover Inspector
-
-Responsibility:
-
-- centralize transient hover state for both nodes and wires
-- expose a single UI-facing inspection contract for the HUD and floating tooltip
-
-Why it exists:
-
-- removes type-specific hover state such as separate resistor and wire hover branches
-- keeps inspection UI in the render layer without modifying the simulation engine
-- creates a clean extension point for future current, voltage, and diagnostic fields
-
-Current editor state:
-
-```jsx
-const [hoveredEntity, setHoveredEntity] = useState(null);
-```
-
-The value is intentionally small and disposable:
-
-- `{ kind: "node", id: "node-7" }`
-- `{ kind: "wire", id: "wire-3" }`
-- `null`
-
-This matters architecturally because hover is not persistent authored circuit data. It is pointer-driven UI state. Keeping it in one object makes the editor easier to reason about:
-
-- selection remains persistent intent state
-- hover remains ephemeral inspection state
-- simulation remains derived electrical state
-
-The render layer now derives a `hoveredInspector` object from:
-
-- `hoveredEntity`
-- `nodes`
-- `wires`
-- the generated `netlist`
-- derived current and voltage results
-- derived `simulationState`
-
-That inspector object then feeds two separate consumers:
-
-- `CoordinateReadout` for the fixed debug HUD
-- `HoverInspectorTooltip` for the floating near-cursor inspector
-
-This is a useful separation because the expensive or type-aware decision logic happens once, while presentation can evolve independently.
-
-### `HoverInspectorTooltip`
-
-Responsibility:
-
-- render a floating tooltip near the pointer for the currently hovered entity
-
-Why it exists:
-
-- provides immediate local inspection feedback without forcing the user to look back to the corner HUD
-- makes component metadata and live electrical approximations feel attached to the scene itself
-
-Input:
-
-- `hoveredInspector`
-- `pointerClientPosition`
-- `viewport`
-
-Output:
-
-- a fixed-position floating inspection card
-
-Current displayed fields include:
-
-- component type
-- component id
-- resistor resistance, current, and voltage drop
-- LED on/off state, forward voltage, and current
-- battery voltage and output current
-- switch or button state plus current passing
-- wire identity
-
-If a solved value is not available, the tooltip intentionally shows `--`. This is an important contract boundary:
-
-- the UI layer may inspect derived results
-- the UI layer must not invent simulation state changes
-- missing data should degrade gracefully rather than forcing engine changes
 
 ### `ModeToolbar`
 
@@ -5256,10 +5173,6 @@ The code evolved through these mutations:
 102. Double-clicking a resistor in `select` mode now opens a simple resistance-value editor.
 103. The HUD hover readout now uses a single `Hover` line instead of a dedicated hovered-wire-only field.
 104. Hovering a resistor now surfaces both resistance and solved current in the HUD.
-105. Hover state is now centralized into a single `hoveredEntity` object that represents either a node, a wire, or `null`.
-106. The editor now derives a shared `hoveredInspector` view-model so both the HUD and a floating tooltip can read from the same inspection contract.
-107. Hover inspection now covers wires, resistors, LEDs, batteries, switches, and buttons without changing simulation-engine behavior.
-108. Missing hover-time electrical values now degrade to `--`, preserving a UI-only boundary for the inspector layer.
 
 ## Stage 50: Simulation Debug Overlay
 
