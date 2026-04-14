@@ -5,6 +5,7 @@ import {
   getComponent,
   getComponentBehavior,
   hydrateNode,
+  COMPONENT_OPTIONS,
 } from "./componentRegistry";
 import {
   exportCircuitToFile,
@@ -70,14 +71,28 @@ const SIDEBAR_CANVAS_OFFSET = SIDEBAR_WIDTH + SIDEBAR_EDGE_OFFSET + SIDEBAR_GAP;
 const WORKSPACE_SIDEBAR_TOP = 152;
 const SIDEBAR_COMPONENTS = [
   { value: "WIRE", label: "Wire", mode: "wire" },
-  { value: "RESISTOR", label: "Resistor", mode: "create-node" },
-  { value: "BATTERY", label: "Battery", mode: "create-node" },
-  { value: "LED", label: "LED", mode: "create-node" },
-  { value: "SWITCH", label: "Switch", mode: "create-node" },
+  ...COMPONENT_OPTIONS.filter((component) => component.value !== "TEST").map((component) => ({
+    value: component.value,
+    label: component.label,
+    mode: "create-node",
+  })),
 ];
 
 function getNodeRotation(node) {
   return typeof node?.rotation === "number" ? node.rotation : 0;
+}
+
+function isEditableKeyboardTarget(target) {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  const tagName = target.tagName?.toLowerCase();
+  return tagName === "input" || tagName === "textarea";
 }
 
 function rotatePointOffset(dx, dy, rotation) {
@@ -1879,6 +1894,10 @@ function Editor() {
 
   useEffect(() => {
     function handleKeyDown(event) {
+      if (isEditableKeyboardTarget(event.target)) {
+        return;
+      }
+
       const isModifierPressed = event.ctrlKey || event.metaKey;
 
       if (isModifierPressed && event.key.toLowerCase() === "z") {
